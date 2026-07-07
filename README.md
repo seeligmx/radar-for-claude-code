@@ -17,11 +17,9 @@
 
 ## Two features, one glance
 
-**Live status in every window title**<br>
-💬 working, ⚠️ needs you, 🟢 done. Every project, one look.
-
-**macOS banners and sounds**<br>
-A background window pings you when it needs you or finishes, one click jumps right in. The window you're looking at stays quiet.
+| **Live status in every window title** | **macOS banners and sounds** |
+| --- | --- |
+| 💬 working, ⚠️ needs you, 🟢 done. Every project, one look. | A background window pings you when it needs you or finishes, one click jumps right in. The window you're looking at stays quiet. |
 
 > [!TIP]
 > **VS Code on macOS has native tabs.** Set `"window.nativeTabs": true` and restart: every window packs into one tab bar, a live status board for all your Claudes. Radar works without them too (title bar, window switcher, Mission Control).
