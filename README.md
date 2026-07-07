@@ -33,7 +33,7 @@ A background window pings you when it needs you or finishes, one click jumps rig
 
 ## Setup
 
-Radar offers to set itself up on first launch. Or via the Command Palette: **Add ${claudeRadarStatus} to window.title**, then **Install Claude hooks** (writes to `~/.claude/settings.json`, backup first, other hooks stay put). Updates keep the hooks current automatically. Uninstalling? Run **Remove Claude hooks** first, then uninstall.
+Radar offers to set itself up on first launch and keeps reminding you until it's done: **both steps are required, no marker shows without them.** If `terminal-notifier` is missing, it offers the Homebrew install too. Or do it via the Command Palette: **Add ${claudeRadarStatus} to window.title**, then **Install Claude hooks** (writes to `~/.claude/settings.json`, backup first, other hooks stay put). Updates keep the hooks current automatically. Uninstalling? Run **Remove Claude hooks** first, then uninstall.
 
 ## Privacy & performance
 

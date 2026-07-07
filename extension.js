@@ -341,20 +341,69 @@ async function removeHooks() {
   vscode.window.showInformationMessage('Radar for Claude Code hooks removed. Backup saved.');
 }
 
+// Setup is required: without the title variable and the hooks, no marker can
+// ever appear. Re-offer on activation until it's done, rate-limited to once
+// per hour so several windows don't stack dialogs, with a permanent opt-out.
 async function maybeOfferSetup(context) {
-  if (context.globalState.get('setupOffered')) return;
-  await context.globalState.update('setupOffered', true);
-  const titleOk = titleHasVariable();
-  const hooksOk = hooksInstalled();
-  if (titleOk && hooksOk) return;
+  if (context.globalState.get('setupDeclined')) return;
+  if (titleHasVariable() && hooksInstalled()) return;
+  const last = context.globalState.get('setupOfferedAt', 0);
+  if (Date.now() - last < 60 * 60 * 1000) return;
+  await context.globalState.update('setupOfferedAt', Date.now());
   const pick = await vscode.window.showInformationMessage(
-    'Set up Radar for Claude Code? It adds the status to your window title and installs the Claude hooks (with a backup).',
+    'Radar needs a one-time setup: the status variable in window.title and the Claude hooks in ~/.claude/settings.json (a backup is written). Without it, no marker will show.',
     'Set up',
-    'Later'
+    'Not now',
+    "Don't ask again"
   );
   if (pick === 'Set up') {
-    if (!titleOk) await setupTitle();
-    if (!hooksOk) await installHooks();
+    if (!titleHasVariable()) await setupTitle();
+    if (!hooksInstalled()) await installHooks();
+  } else if (pick === "Don't ask again") {
+    await context.globalState.update('setupDeclined', true);
+  }
+}
+
+// Banners jump into the right window only with terminal-notifier; the
+// osascript fallback isn't clickable. Once the main setup is done, offer the
+// Homebrew install. Same rate limit and opt-out as the setup offer.
+async function maybeOfferNotifier(context) {
+  if (context.globalState.get('notifierDeclined')) return;
+  if (!titleHasVariable() || !hooksInstalled()) return; // one thing at a time
+  detectBinaries();
+  if (notifierPath) return;
+  const brew = ['/opt/homebrew/bin/brew', '/usr/local/bin/brew'].find((p) => fs.existsSync(p));
+  if (!brew) return; // no Homebrew, nothing to offer; the README covers it
+  const last = context.globalState.get('notifierOfferedAt', 0);
+  if (Date.now() - last < 60 * 60 * 1000) return;
+  await context.globalState.update('notifierOfferedAt', Date.now());
+  const pick = await vscode.window.showInformationMessage(
+    "Optional: install terminal-notifier (Homebrew) so a click on a banner jumps into the right window. Without it, banners show but aren't clickable.",
+    'Install',
+    'Not now',
+    "Don't ask again"
+  );
+  if (pick === 'Install') {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'Installing terminal-notifier…' },
+      () =>
+        new Promise((resolve) => {
+          execFile(brew, ['install', 'terminal-notifier'], (err, stdout, stderr) => {
+            if (err) {
+              vscode.window.showErrorMessage(
+                'Homebrew failed: ' + String(stderr || err.message).slice(-300)
+              );
+            } else {
+              vscode.window.showInformationMessage(
+                'terminal-notifier installed. Banners are now clickable.'
+              );
+            }
+            resolve();
+          });
+        })
+    );
+  } else if (pick === "Don't ask again") {
+    await context.globalState.update('notifierDeclined', true);
   }
 }
 
@@ -493,6 +542,7 @@ async function activate(context) {
   (async () => {
     if (hasOwnHooks() && !hooksInstalled()) await installHooks(true);
     await maybeOfferSetup(context);
+    await maybeOfferNotifier(context);
   })();
 }
 

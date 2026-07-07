@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2 - 2026-07-07
+
+- Setup you can't miss: Radar keeps offering its one-time setup until it's done (or you opt out), and says clearly that no marker shows without it.
+- If terminal-notifier is missing, Radar offers to install it via Homebrew, so a banner click jumps into the right window.
+
 ## 1.0.1 - 2026-07-07
 
 - Banners now carry the Radar icon (shown on the banner's right, via terminal-notifier's content image).
