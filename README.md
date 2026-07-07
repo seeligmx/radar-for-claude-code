@@ -6,9 +6,7 @@
 <p align="center"><strong>💬 working&ensp;·&ensp;⚠️ needs you&ensp;·&ensp;🟢 done</strong></p>
 
 <p align="center">
-  <a href="https://marketplace.visualstudio.com/items?itemName=seeligmx.radar-for-claude-code"><img src="https://badgen.net/vs-marketplace/v/seeligmx.radar-for-claude-code?color=ff4d1f&label=VS%20Code%20Marketplace" alt="VS Code Marketplace"></a>
-  <img src="https://badgen.net/badge/license/MIT/555" alt="MIT license">
-  <img src="https://badgen.net/badge/platform/macOS/555" alt="macOS only">
+  <a href="https://marketplace.visualstudio.com/items?itemName=seeligmx.radar-for-claude-code"><img src="https://badgen.net/vs-marketplace/v/seeligmx.radar-for-claude-code?color=ff4d1f&label=VS%20Code%20Marketplace" alt="VS Code Marketplace"></a>&emsp;<a href="https://seelig.mx"><img src="https://img.shields.io/badge/Made%20by-SEELIG%E2%84%A2-white" alt="Made by SEELIG"></a>&emsp;<a href="https://x.com/seeligmx"><img src="https://img.shields.io/badge/Follow%20on%20X-%40seeligmx-white" alt="Follow @seeligmx on X"></a>
 </p>
 
 ![The native tab bar as a live status board: working, needs you, done](media/radar-demo.gif)
@@ -19,7 +17,7 @@
 
 - **Live status in every window title.** 💬 working, ⚠️ needs you, 🟢 done. Every project, one look.
 - **macOS banners and sounds.** A background window pings you when it needs you or finishes, one click jumps right in. The window you're looking at stays quiet.
-
+hh
 ## Tips
 
 - **Native tabs are the killer setup.** Set `"window.nativeTabs": true` in your settings and restart: every window packs into one tab bar, a live status board for all your Claudes. Radar works without them too (title bar, window switcher, Mission Control).
@@ -79,11 +77,3 @@ Give just the symbol, the space is added for you. Empty means no marker for that
 | `claudeRadar.soundWaiting` | `Basso` | sound when needs you (empty = silent) |
 | `claudeRadar.soundDone` | `Glass` | sound when done (empty = silent) |
 | `claudeRadar.shellTasksKeepWorking` | `false` | background shell tasks (e.g. a dev server) keep the working marker |
-
----
-
-<br>
-
-<p align="center">
-  <a href="https://seelig.mx"><img src="https://badgen.net/badge/Made%20by/SEELIG%E2%84%A2/ff4d1f" alt="Made by SEELIG"></a>&emsp;<a href="https://x.com/seeligmx"><img src="https://badgen.net/badge/Follow/%40seeligmx/000" alt="Follow @seeligmx on X"></a>
-</p>
