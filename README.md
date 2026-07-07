@@ -17,33 +17,32 @@
 
 ## Two features, one glance
 
-**📡 Live status in every window title.** Each project's title and native tab shows what its Claude is up to: 💬 working, ⚠️ needs you, 🟢 done. All projects, one look.
+**Live status in every window title**<br>
+💬 working, ⚠️ needs you, 🟢 done. Every project, one look.
 
-**🔔 macOS banners and sounds.** When a background window needs you or finishes, a native notification pings you, and a click jumps straight into the right window. The window you're focused on stays quiet.
+**macOS banners and sounds**<br>
+A background window pings you when it needs you or finishes, one click jumps right in. The window you're looking at stays quiet.
 
 > [!TIP]
-> **Did you know? VS Code on macOS has native tabs.** Set `"window.nativeTabs": true`, restart VS Code, and every project window packs into one tab bar, which turns it into a live status board for all your Claudes. Radar works without it too (title bar, window switcher, Mission Control), but this is the tightest view.
-
-**macOS only** (banners, sounds, native tabs, and the hook tools are all macOS).
+> **VS Code on macOS has native tabs.** Set `"window.nativeTabs": true` and restart: every window packs into one tab bar, a live status board for all your Claudes. Radar works without them too (title bar, window switcher, Mission Control).
 
 ## Requirements
 
-- VS Code ≥ 1.93 (uses `registerWindowTitleVariable`)
-- Claude Code (hooks live in `~/.claude/settings.json`)
-- macOS. `terminal-notifier` (Homebrew) makes banners clickable; without it there's an `osascript` fallback (notification + sound, not clickable)
+- VS Code ≥ 1.93 · Claude Code · **macOS only**
+- `terminal-notifier` (Homebrew) makes banners clickable; without it you still get notification + sound
 
 ## Setup
 
-On first launch the extension offers to set itself up. Or do it from the Command Palette:
+Radar offers to set itself up on first launch. Or via the Command Palette: **Add ${claudeRadarStatus} to window.title**, then **Install Claude hooks** (writes to `~/.claude/settings.json`, backup first, other hooks stay put). Updates keep the hooks current automatically. Uninstalling? Run **Remove Claude hooks** first, then uninstall.
 
-1. **Radar for Claude Code: Add ${claudeRadarStatus} to window.title** prepends `${claudeRadarStatus}` to your title (user settings, no workspace changes).
-2. **Radar for Claude Code: Install Claude hooks** adds six hooks to `~/.claude/settings.json` (backup first). Your old entries are replaced on upgrade; other hooks stay put.
+## Privacy & performance
 
-After an update the extension reconciles its own hooks on startup, so a new hook gets added silently. The manual command is only for the first install.
+- **No network, no telemetry.** Everything happens in local files.
+- **Event-driven, not polling.** Idle cost is effectively zero.
+- **Safe config writes.** Atomic, with a backup. Removal is one command.
 
-Removing it? VS Code doesn't run extension code on uninstall, so run **Radar for Claude Code: Remove Claude hooks** first (backup written, only its own hooks touched), then uninstall.
-
-## How it works
+<details>
+<summary><strong>How it works</strong></summary>
 
 Six Claude hooks drop a file in `~/.claude/tab-status/`, named `sha256(project path)` (first 16 hex chars, realpath-resolved so symlinks match). The content is the status:
 
@@ -61,18 +60,17 @@ Each window watches only its own file and shows the marker from **state + focus*
 
 Stale files (sessions with no matching window) are cleaned up after 24 h.
 
-## Privacy & performance
+</details>
 
-- **No network, no telemetry.** Radar never phones home; everything happens in local files on your Mac.
-- **Event-driven, not polling.** Markers arrive via file-system events; the idle cost is effectively zero.
-- **Config safety.** Every write to `~/.claude/settings.json` is atomic and leaves a backup next to it. Removal is one command, and only Radar's own entries are touched.
-
-## Limits
+<details>
+<summary><strong>Limits</strong></summary>
 
 - The marker is text (emoji) in the title, not a native tab badge, macOS doesn't allow those.
 - `Stop` fires after every response. Fine for the marker and banner (idempotent, one banner per project, focused windows skipped).
 - Multi-root workspaces: the first folder wins.
 - Two events at once: the later one wins.
+
+</details>
 
 ## Settings
 
