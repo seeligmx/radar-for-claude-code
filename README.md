@@ -1,5 +1,7 @@
 # Radar for Claude Code
 
+![The native tab bar as a live status board: working, needs you, done](media/radar-demo.gif)
+
 **Claude Code multitasking, done right.** Running Claude across several projects? Each window title shows what it's doing, working, needs you, or done, so you see at a glance which one to jump to instead of clicking through window after window. Banner and sound when a window's in the background; a focused window stays quiet.
 
 The status lives in the window title, so you see it wherever macOS shows titles: side-by-side windows, the window switcher, Mission Control. Turn on **native tabs** and every project packs into one tab bar for the tightest view. Works either way.

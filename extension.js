@@ -145,12 +145,15 @@ function notify(label) {
   const sound = done ? cfg.get('soundDone', 'Glass') : cfg.get('soundWaiting', 'Basso');
 
   if (notifierPath) {
-    // Project name prominent as the title, status below
+    // Project name prominent as the title, status below. The Radar icon
+    // shows on the banner's right (-contentImage); the left app icon can't
+    // be replaced on modern macOS without shipping a signed app bundle.
     const args = [
       '-title', projectName,
       '-subtitle', subtitle,
       '-message', 'Claude Code',
       '-group', 'claude-radar:' + projectPath, // replaces the previous banner of the same project
+      '-contentImage', path.join(__dirname, 'icon.png'),
     ];
     if (sound) args.push('-sound', sound);
     if (codeCliPath && projectPath) {

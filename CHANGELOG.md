@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 - 2026-07-07
+
+- Banners now carry the Radar icon (shown on the banner's right, via terminal-notifier's content image).
+- README: animated demo of the tab bar as a live status board (working, needs you plus banner, done).
+
 ## 1.0.0 - 2026-07-07
 
 First public release. Radar shows each project's Claude Code status right in the window title, so across several projects you can tell at a glance which one needs you.
