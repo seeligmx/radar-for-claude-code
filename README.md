@@ -1,5 +1,7 @@
 # Radar for Claude Code
 
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/seeligmx.radar-for-claude-code?label=VS%20Code%20Marketplace&color=ff4d1f)](https://marketplace.visualstudio.com/items?itemName=seeligmx.radar-for-claude-code)
+
 ![The native tab bar as a live status board: working, needs you, done](media/radar-demo.gif)
 
 **Claude Code multitasking, done right.** Running Claude across several projects? Each window title shows what it's doing, working, needs you, or done, so you see at a glance which one to jump to instead of clicking through window after window. Banner and sound when a window's in the background; a focused window stays quiet.
