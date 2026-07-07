@@ -1,0 +1,109 @@
+{
+  "name": "radar-for-claude-code",
+  "displayName": "Radar for Claude Code: 💬 working, ⚠️ needs you, 🟢 done",
+  "description": "Claude Code multitasking, done right. Run it across a handful of projects and each window title shows what its Claude is up to: working, needs you, or done. Turn on native tabs and your tab bar becomes a live status board, so you always know which project to jump to next. Plus a banner and sound when a window's in the background. macOS only.",
+  "version": "1.0.0",
+  "publisher": "seeligmx",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/seeligmx/radar-for-claude-code.git"
+  },
+  "bugs": {
+    "url": "https://github.com/seeligmx/radar-for-claude-code/issues"
+  },
+  "homepage": "https://github.com/seeligmx/radar-for-claude-code#readme",
+  "icon": "icon.png",
+  "galleryBanner": {
+    "color": "#FF4D1F",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "radar",
+    "claude code",
+    "notification",
+    "notifications",
+    "multitasking",
+    "status",
+    "tab",
+    "done",
+    "waiting",
+    "hooks",
+    "macos"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudeRadar.setupTitle",
+        "title": "Radar for Claude Code: Add ${claudeRadarStatus} to window.title"
+      },
+      {
+        "command": "claudeRadar.installHooks",
+        "title": "Radar for Claude Code: Install Claude hooks"
+      },
+      {
+        "command": "claudeRadar.removeHooks",
+        "title": "Radar for Claude Code: Remove Claude hooks"
+      },
+      {
+        "command": "claudeRadar.clear",
+        "title": "Radar for Claude Code: Clear marker"
+      }
+    ],
+    "configuration": {
+      "title": "Radar for Claude Code",
+      "properties": {
+        "claudeRadar.markerWorking": {
+          "type": "string",
+          "default": "💬",
+          "description": "Shown while Claude is working. Always visible, no banner or sound. Just the emoji, the space is added for you."
+        },
+        "claudeRadar.markerWaiting": {
+          "type": "string",
+          "default": "⚠️",
+          "description": "Shown when Claude needs you (a question or a permission). Just the emoji."
+        },
+        "claudeRadar.markerDone": {
+          "type": "string",
+          "default": "🟢",
+          "description": "Shown when Claude is done. Just the emoji."
+        },
+        "claudeRadar.banner": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a macOS banner when Claude needs you or is done (background windows only)."
+        },
+        "claudeRadar.soundWaiting": {
+          "type": "string",
+          "default": "Basso",
+          "description": "Sound when Claude needs you. macOS sound name, empty for silent."
+        },
+        "claudeRadar.soundDone": {
+          "type": "string",
+          "default": "Glass",
+          "description": "Sound when Claude is done. Empty for silent."
+        },
+        "claudeRadar.shellTasksKeepWorking": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "Keep the working marker while a background shell task Claude started (e.g. a dev server) is still running. When off, only subagents, workflows, and monitors hold the working state after a turn ends."
+        }
+      }
+    }
+  }
+}
