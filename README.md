@@ -79,3 +79,11 @@ Give just the symbol, the space is added for you. Empty means no marker for that
 | `claudeRadar.soundWaiting` | `Basso` | sound when needs you (empty = silent) |
 | `claudeRadar.soundDone` | `Glass` | sound when done (empty = silent) |
 | `claudeRadar.shellTasksKeepWorking` | `false` | background shell tasks (e.g. a dev server) keep the working marker |
+
+---
+
+<br>
+
+<p align="center">
+  <a href="https://seelig.mx"><img src="https://badgen.net/badge/Made%20by/SEELIG%E2%84%A2/ff4d1f" alt="Made by SEELIG"></a>&emsp;<a href="https://x.com/seeligmx"><img src="https://badgen.net/badge/Follow/%40seeligmx/000" alt="Follow @seeligmx on X"></a>
+</p>
