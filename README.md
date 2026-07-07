@@ -1,6 +1,6 @@
 # Radar for Claude Code
 
-[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/seeligmx.radar-for-claude-code?label=VS%20Code%20Marketplace&color=ff4d1f)](https://marketplace.visualstudio.com/items?itemName=seeligmx.radar-for-claude-code)
+[![VS Code Marketplace](https://badgen.net/vs-marketplace/v/seeligmx.radar-for-claude-code?color=ff4d1f&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=seeligmx.radar-for-claude-code)
 
 ![The native tab bar as a live status board: working, needs you, done](media/radar-demo.gif)
 
