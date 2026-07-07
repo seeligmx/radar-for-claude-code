@@ -17,17 +17,14 @@
 
 ## Two features, one glance
 
-**Live status in every window title**<br>
-💬 working, ⚠️ needs you, 🟢 done. Every project, one look.
+- **Live status in every window title.** 💬 working, ⚠️ needs you, 🟢 done. Every project, one look.
+- **macOS banners and sounds.** A background window pings you when it needs you or finishes, one click jumps right in. The window you're looking at stays quiet.
 
-**macOS banners and sounds**<br>
-A background window pings you when it needs you or finishes, one click jumps right in. The window you're looking at stays quiet.
+## Tips
 
-> [!TIP]
-> **VS Code on macOS has native tabs.** Set `"window.nativeTabs": true` in your settings and restart: every window packs into one tab bar, a live status board for all your Claudes. Radar works without them too (title bar, window switcher, Mission Control).
-
-> [!TIP]
-> **Switch projects without the mouse.** Bind `workbench.action.showPreviousWindowTab` and `showNextWindowTab` to keys you like (`⌘←` / `⌘→` work nicely) and step along the tab bar, straight to the Claude that needs you. Without native tabs, `` ⌘` `` cycles through the windows.
+- **Native tabs are the killer setup.** Set `"window.nativeTabs": true` in your settings and restart: every window packs into one tab bar, a live status board for all your Claudes. Radar works without them too (title bar, window switcher, Mission Control).
+- **Switch projects without the mouse.** Bind `workbench.action.showPreviousWindowTab` and `showNextWindowTab` to keys you like (`⌘←` / `⌘→` work nicely), and step straight to the Claude that needs you. Without native tabs, `` ⌘` `` cycles through the windows.
+- **Too loud?** Empty `claudeRadar.soundWaiting` / `soundDone` for silent banners, or turn `claudeRadar.banner` off entirely, the title markers keep working either way.
 
 ## Requirements
 
