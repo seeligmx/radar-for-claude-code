@@ -24,7 +24,7 @@
 A background window pings you when it needs you or finishes, one click jumps right in. The window you're looking at stays quiet.
 
 > [!TIP]
-> **VS Code on macOS has native tabs.** Set `"window.nativeTabs": true` and restart: every window packs into one tab bar, a live status board for all your Claudes. Radar works without them too (title bar, window switcher, Mission Control).
+> **VS Code on macOS has native tabs.** Set `"window.nativeTabs": true` in your settings and restart: every window packs into one tab bar, a live status board for all your Claudes. Radar works without them too (title bar, window switcher, Mission Control).
 
 ## Requirements
 
