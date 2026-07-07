@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.3 - 2026-07-07
+
+- New commands: **Mute banners for 1 hour** and **Unmute banners**, for screen sharing and presentations. Sounds pause too; the title markers keep working.
+- Refreshed README: tips section, clearer feature overview.
+
 ## 1.0.2 - 2026-07-07
 
 - Setup you can't miss: Radar keeps offering its one-time setup until it's done (or you opt out), and says clearly that no marker shows without it.

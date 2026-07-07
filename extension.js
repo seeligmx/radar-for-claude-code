@@ -23,6 +23,9 @@ const crypto = require('crypto');
 const STATUS_DIR = path.join(os.homedir(), '.claude', 'tab-status');
 // Mirror of the shellTasksKeepWorking setting for the Stop hook (see there)
 const SHELL_FLAG = path.join(STATUS_DIR, '.shell-keeps-working');
+// Mute flag: holds an epoch-ms timestamp until which banners and sounds stay
+// silent. Lives in the shared status dir so one command mutes every window.
+const MUTE_FLAG = path.join(STATUS_DIR, '.muted-until');
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
 const CONTEXT_KEY = 'claudeRadar.status';
 const TITLE_VAR = '${claudeRadarStatus}';
@@ -132,9 +135,22 @@ function setMarker(label) {
   return vscode.commands.executeCommand('setContext', CONTEXT_KEY, marker);
 }
 
+// Muted (and not yet expired)? Markers keep updating, only banner/sound pause.
+function isMuted() {
+  try {
+    const until = Number(fs.readFileSync(MUTE_FLAG, 'utf8'));
+    if (Date.now() < until) return true;
+    fs.unlinkSync(MUTE_FLAG); // expired: clean up so the check stays cheap
+  } catch {
+    /* no flag or unreadable: not muted */
+  }
+  return false;
+}
+
 function notify(label) {
   const cfg = vscode.workspace.getConfiguration('claudeRadar');
   if (!cfg.get('banner', true)) return;
+  if (isMuted()) return;
   detectBinaries(); // lazy: also picks up a terminal-notifier installed after startup
 
   const folder = (vscode.workspace.workspaceFolders || [])[0];
@@ -415,7 +431,7 @@ async function activate(context) {
     // The commands from package.json appear in the palette here too; without
     // registration a click throws "command not found" instead of an answer.
     const notice = () => vscode.window.showInformationMessage('Radar for Claude Code is macOS only.');
-    for (const cmd of ['clear', 'installHooks', 'removeHooks', 'setupTitle']) {
+    for (const cmd of ['clear', 'installHooks', 'removeHooks', 'setupTitle', 'mute', 'unmute']) {
       context.subscriptions.push(vscode.commands.registerCommand('claudeRadar.' + cmd, notice));
     }
     if (!context.globalState.get('macosOnlyNoticeShown')) {
@@ -532,7 +548,24 @@ async function activate(context) {
     vscode.commands.registerCommand('claudeRadar.clear', () => setMarker(null)),
     vscode.commands.registerCommand('claudeRadar.installHooks', () => installHooks()),
     vscode.commands.registerCommand('claudeRadar.removeHooks', removeHooks),
-    vscode.commands.registerCommand('claudeRadar.setupTitle', setupTitle)
+    vscode.commands.registerCommand('claudeRadar.setupTitle', setupTitle),
+    vscode.commands.registerCommand('claudeRadar.mute', () => {
+      fs.writeFileSync(MUTE_FLAG, String(Date.now() + 60 * 60 * 1000));
+      vscode.window.showInformationMessage(
+        'Banners and sounds muted for 1 hour. The title markers stay on.'
+      );
+    }),
+    vscode.commands.registerCommand('claudeRadar.unmute', () => {
+      const wasMuted = isMuted();
+      try {
+        fs.unlinkSync(MUTE_FLAG);
+      } catch {
+        /* already gone, fine */
+      }
+      vscode.window.showInformationMessage(
+        wasMuted ? 'Banners and sounds are back on.' : "Banners weren't muted."
+      );
+    })
   );
 
   // Keep our own hooks current on activation: if some are installed but
