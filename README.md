@@ -20,7 +20,7 @@
 
 ## Tips
 
-- **Native tabs are the killer setup.** Set `"window.nativeTabs": true` in your settings and restart: every window packs into one tab bar, a live status board for all your Claudes. Radar works without them too (title bar, window switcher, Mission Control).
+- **Native tabs are the killer setup.** Set `"window.nativeTabs": true` in your settings and restart: every window packs into one tab bar, a live status board for all your Claudes. Already have windows open? **Window → Merge All Windows** pulls them all into one bar. (Radar works without native tabs too: title bar, window switcher, Mission Control.)
 - **Switch projects without the mouse.** Bind `workbench.action.showPreviousWindowTab` and `showNextWindowTab` to keys you like (`⌘←` / `⌘→` work nicely), and step straight to the Claude that needs you. Without native tabs, `` ⌘` `` cycles through the windows.
 - **Presenting?** Run **Mute banners for 1 hour** from the Command Palette, sounds pause too and the markers keep working. For quiet by default, empty `claudeRadar.soundWaiting` / `soundDone` or turn `claudeRadar.banner` off.
 
