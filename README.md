@@ -26,6 +26,9 @@ A background window pings you when it needs you or finishes, one click jumps rig
 > [!TIP]
 > **VS Code on macOS has native tabs.** Set `"window.nativeTabs": true` in your settings and restart: every window packs into one tab bar, a live status board for all your Claudes. Radar works without them too (title bar, window switcher, Mission Control).
 
+> [!TIP]
+> **Switch projects without the mouse.** Bind `workbench.action.showPreviousWindowTab` and `showNextWindowTab` to keys you like (`⌘←` / `⌘→` work nicely) and step along the tab bar, straight to the Claude that needs you. Without native tabs, `` ⌘` `` cycles through the windows.
+
 ## Requirements
 
 - VS Code ≥ 1.93 · Claude Code · **macOS only**
