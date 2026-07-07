@@ -41,8 +41,7 @@ Radar offers to set itself up on first launch. Or via the Command Palette: **Add
 - **Event-driven, not polling.** Idle cost is effectively zero.
 - **Safe config writes.** Atomic, with a backup. Removal is one command.
 
-<details>
-<summary><strong>How it works</strong></summary>
+## How it works
 
 Six Claude hooks drop a file in `~/.claude/tab-status/`, named `sha256(project path)` (first 16 hex chars, realpath-resolved so symlinks match). The content is the status:
 
@@ -60,17 +59,12 @@ Each window watches only its own file and shows the marker from **state + focus*
 
 Stale files (sessions with no matching window) are cleaned up after 24 h.
 
-</details>
-
-<details>
-<summary><strong>Limits</strong></summary>
+## Limits
 
 - The marker is text (emoji) in the title, not a native tab badge, macOS doesn't allow those.
 - `Stop` fires after every response. Fine for the marker and banner (idempotent, one banner per project, focused windows skipped).
 - Multi-root workspaces: the first folder wins.
 - Two events at once: the later one wins.
-
-</details>
 
 ## Settings
 
