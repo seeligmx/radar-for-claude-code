@@ -17,7 +17,7 @@
 
 - **Live status in every window title.** 💬 working, ⚠️ needs you, 🟢 done. Every project, one look.
 - **macOS banners and sounds.** A background window pings you when it needs you or finishes, one click jumps right in. The window you're looking at stays quiet.
-hh
+
 ## Tips
 
 - **Native tabs are the killer setup.** Set `"window.nativeTabs": true` in your settings and restart: every window packs into one tab bar, a live status board for all your Claudes. Radar works without them too (title bar, window switcher, Mission Control).
