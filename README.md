@@ -1,12 +1,28 @@
-# Radar for Claude Code
+<h1 align="center">
+  <img src="icon.png" width="96" alt="Radar for Claude Code icon"><br>
+  Radar for Claude Code
+</h1>
 
-[![VS Code Marketplace](https://badgen.net/vs-marketplace/v/seeligmx.radar-for-claude-code?color=ff4d1f&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=seeligmx.radar-for-claude-code)
+<p align="center"><strong>💬 working&ensp;·&ensp;⚠️ needs you&ensp;·&ensp;🟢 done</strong></p>
+
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=seeligmx.radar-for-claude-code"><img src="https://badgen.net/vs-marketplace/v/seeligmx.radar-for-claude-code?color=ff4d1f&label=VS%20Code%20Marketplace" alt="VS Code Marketplace"></a>
+  <img src="https://badgen.net/badge/license/MIT/555" alt="MIT license">
+  <img src="https://badgen.net/badge/platform/macOS/555" alt="macOS only">
+</p>
 
 ![The native tab bar as a live status board: working, needs you, done](media/radar-demo.gif)
 
-**Claude Code multitasking, done right.** Running Claude across several projects? Each window title shows what it's doing, working, needs you, or done, so you see at a glance which one to jump to instead of clicking through window after window. Banner and sound when a window's in the background; a focused window stays quiet.
+**Claude Code multitasking, done right.** Run Claude across several projects and always know which one needs you, without clicking through window after window.
 
-The status lives in the window title, so you see it wherever macOS shows titles: side-by-side windows, the window switcher, Mission Control. Turn on **native tabs** and every project packs into one tab bar for the tightest view. Works either way.
+## Two features, one glance
+
+**📡 Live status in every window title.** Each project's title and native tab shows what its Claude is up to: 💬 working, ⚠️ needs you, 🟢 done. All projects, one look.
+
+**🔔 macOS banners and sounds.** When a background window needs you or finishes, a native notification pings you, and a click jumps straight into the right window. The window you're focused on stays quiet.
+
+> [!TIP]
+> **Did you know? VS Code on macOS has native tabs.** Set `"window.nativeTabs": true`, restart VS Code, and every project window packs into one tab bar, which turns it into a live status board for all your Claudes. Radar works without it too (title bar, window switcher, Mission Control), but this is the tightest view.
 
 **macOS only** (banners, sounds, native tabs, and the hook tools are all macOS).
 
@@ -17,8 +33,6 @@ The status lives in the window title, so you see it wherever macOS shows titles:
 - macOS. `terminal-notifier` (Homebrew) makes banners clickable; without it there's an `osascript` fallback (notification + sound, not clickable)
 
 ## Setup
-
-**Tip:** for the tightest view, turn on native tabs so every project's status sits in one bar. Set `"window.nativeTabs": true` and restart VS Code. Optional, though, the marker works without it too, you just read it from each window's title bar.
 
 On first launch the extension offers to set itself up. Or do it from the Command Palette:
 
@@ -47,6 +61,12 @@ Each window watches only its own file and shows the marker from **state + focus*
 
 Stale files (sessions with no matching window) are cleaned up after 24 h.
 
+## Privacy & performance
+
+- **No network, no telemetry.** Radar never phones home; everything happens in local files on your Mac.
+- **Event-driven, not polling.** Markers arrive via file-system events; the idle cost is effectively zero.
+- **Config safety.** Every write to `~/.claude/settings.json` is atomic and leaves a backup next to it. Removal is one command, and only Radar's own entries are touched.
+
 ## Limits
 
 - The marker is text (emoji) in the title, not a native tab badge, macOS doesn't allow those.
@@ -67,4 +87,3 @@ Give just the symbol, the space is added for you. Empty means no marker for that
 | `claudeRadar.soundWaiting` | `Basso` | sound when needs you (empty = silent) |
 | `claudeRadar.soundDone` | `Glass` | sound when done (empty = silent) |
 | `claudeRadar.shellTasksKeepWorking` | `false` | background shell tasks (e.g. a dev server) keep the working marker |
-
