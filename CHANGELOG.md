@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.4 - 2026-07-08
+
+- README says it out loud now: Radar is open source, read every line on GitHub ("Privacy, performance & trust").
+- Marketplace listing polish: author metadata, AI category, more searchable tags.
+
 ## 1.0.3 - 2026-07-07
 
 - New commands: **Mute banners for 1 hour** and **Unmute banners**, for screen sharing and presentations. Sounds pause too; the title markers keep working.
