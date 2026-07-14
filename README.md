@@ -72,6 +72,7 @@ Give just the symbol, the space is added for you. Empty means no marker for that
 | Setting | Default | |
 | --- | --- | --- |
 | `claudeRadar.markerWorking` | `💬` | while Claude is working |
+| `claudeRadar.showWorkingTime` | `true` | show the elapsed time in the working marker (`💬 14m`) |
 | `claudeRadar.markerWaiting` | `⚠️` | when Claude needs you |
 | `claudeRadar.markerDone` | `🟢` | when Claude is done |
 | `claudeRadar.banner` | `true` | macOS banner on/off |

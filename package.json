@@ -90,6 +90,11 @@
           "default": "💬",
           "description": "Shown while Claude is working. Always visible, no banner or sound. Just the emoji, the space is added for you."
         },
+        "claudeRadar.showWorkingTime": {
+          "type": "boolean",
+          "default": true,
+          "description": "Append how long Claude has been working to the working marker (💬 14m). Updates once a minute."
+        },
         "claudeRadar.markerWaiting": {
           "type": "string",
           "default": "⚠️",

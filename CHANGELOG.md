@@ -4,6 +4,7 @@
 
 - The 💬 working marker no longer goes missing on long runs: every completed tool call now switches the marker back to working, so an acknowledged permission prompt can't leave the title empty while Claude keeps going (think multi-agent audits).
 - Banner clicks now follow the editor you're actually running (VS Code, Insiders, Cursor, ...), and they work out of the box: Radar uses the CLI inside the app bundle, no `code` shell command needed.
+- New opt-in setting `claudeRadar.showWorkingTime`: the working marker shows how long Claude has been at it (💬 14m).
 - README says it out loud now: Radar is open source, read every line on GitHub ("Privacy, performance & trust").
 - Marketplace listing polish: author metadata, AI category, more searchable tags.
 

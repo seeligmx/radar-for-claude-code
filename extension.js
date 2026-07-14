@@ -152,6 +152,18 @@ function markerFile() {
   return path.join(STATUS_DIR, hash);
 }
 
+// Epoch ms of the transition into 'working'; null outside of it. Feeds the
+// opt-in elapsed time in the marker (💬 14m).
+let workingSince = null;
+
+// '' below one minute, then '14m', from an hour on '1h05'.
+function elapsedLabel(since) {
+  const m = Math.floor((Date.now() - since) / 60000);
+  if (m < 1) return '';
+  if (m < 60) return m + 'm';
+  return Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0');
+}
+
 // label: 'working' | 'waiting' | 'stop' sets the matching marker,
 // null removes it.
 function setMarker(label) {
@@ -163,9 +175,14 @@ function setMarker(label) {
       : label === 'working' ? cfg.get('markerWorking', '💬')
       : cfg.get('markerDone', '🟢')
     ).trim();
+    let time = '';
+    if (label === 'working' && workingSince && cfg.get('showWorkingTime', true)) {
+      const t = elapsedLabel(workingSince);
+      if (t) time = ' ' + t;
+    }
     // We add the separating space ourselves so it doesn't have to be
     // maintained in the settings (empty symbol -> no prefix at all).
-    marker = symbol ? symbol + ' ' : '';
+    marker = symbol ? symbol + time + ' ' : '';
   }
   return vscode.commands.executeCommand('setContext', CONTEXT_KEY, marker);
 }
@@ -499,6 +516,13 @@ async function activate(context) {
   let peekTimer; // hides the briefly shown marker in the active window again
   context.subscriptions.push({ dispose: () => clearTimeout(peekTimer) });
 
+  // Refresh the elapsed time once a minute while 'working' is shown; a no-op
+  // with the setting off (setMarker then rebuilds the same string).
+  const timeTick = setInterval(() => {
+    if (currentLabel === 'working' && workingSince) setMarker('working');
+  }, 60000);
+  context.subscriptions.push({ dispose: () => clearInterval(timeTick) });
+
   const file = markerFile();
   if (file) {
     const check = () => {
@@ -521,6 +545,14 @@ async function activate(context) {
         }
       }
       if (!LABELS.includes(label)) label = 'stop'; // unexpected content -> treat as done
+      // The elapsed-time clock starts on the transition INTO 'working' (the
+      // frequent PostToolUse 'working' repeats must not reset it) and stops
+      // on any other event.
+      if (label === 'working') {
+        if (!workingSince) workingSince = Date.now();
+      } else {
+        workingSince = null;
+      }
       currentLabel = label;
       clearTimeout(peekTimer); // a running peek must never overwrite a new event
       // 'working' is a lasting state and always visible (even in the active
@@ -569,6 +601,9 @@ async function activate(context) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('claudeRadar.shellTasksKeepWorking')) syncShellFlag();
+      // Toggling the time display shows up right away, not on the next tick
+      if (e.affectsConfiguration('claudeRadar.showWorkingTime') && currentLabel === 'working')
+        setMarker('working');
     }),
     vscode.window.onDidChangeWindowState((s) => {
       clearTimeout(peekTimer); // a running peek is obsolete after a focus change
