@@ -1,7 +1,8 @@
 # Changelog
 
-## 1.0.4 - 2026-07-08
+## 1.0.4 - 2026-07-14
 
+- The 💬 working marker no longer goes missing on long runs: every completed tool call now switches the marker back to working, so an acknowledged permission prompt can't leave the title empty while Claude keeps going (think multi-agent audits).
 - README says it out loud now: Radar is open source, read every line on GitHub ("Privacy, performance & trust").
 - Marketplace listing polish: author metadata, AI category, more searchable tags.
 
