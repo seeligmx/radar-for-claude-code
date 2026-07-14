@@ -84,9 +84,14 @@ const HOOK_SPECS = [
   // A question counts as "needs you" (= waiting); its own hook, because
   // AskUserQuestion fires neither Stop nor Notification.
   { event: 'PreToolUse', matcher: 'AskUserQuestion', command: writeMarker('waiting') },
-  // After a question is answered, Claude keeps working without a new
-  // UserPromptSubmit firing -> back to 'working' here (⚠️ -> 💬).
-  { event: 'PostToolUse', matcher: 'AskUserQuestion', command: writeMarker('working') },
+  // Every completed tool call flips back to 'working' (⚠️ -> 💬): after an
+  // answered question or a granted permission Claude keeps working without a
+  // new UserPromptSubmit firing. Only AskUserQuestion has a post event of its
+  // own; granted permissions have none, so with a matcher limited to
+  // AskUserQuestion the title stayed empty for the rest of a long run (e.g.
+  // a multi-agent audit) once a permission prompt had been acknowledged.
+  // The final Stop still wins: it fires after the last PostToolUse.
+  { event: 'PostToolUse', matcher: '', command: writeMarker('working') },
   { event: 'Stop', matcher: '', command: stopMarker }, // done - unless background work is still running
 ];
 
@@ -249,20 +254,25 @@ function hooksInstalled() {
     // new hook with an already-known label would go unnoticed (e.g.
     // PostToolUse -> working, where 'working' already comes from
     // UserPromptSubmit), and a leftover hook from an older version wouldn't
-    // be detected. Work on the parsed commands, not the raw file text (JSON
-    // escaping of the quotes). Identical commands per event collapse in the Set.
+    // be detected. The matcher is part of the comparison: v1.0.4 widened
+    // PostToolUse from 'AskUserQuestion' to '' with an unchanged command; a
+    // command-only comparison would miss that upgrade. Work on the parsed
+    // values, not the raw file text (JSON escaping of the quotes). Identical
+    // matcher+command pairs per event collapse in the Set.
     const byEvent = (pairs) => {
       const m = {};
-      for (const [event, cmd] of pairs) (m[event] = m[event] || new Set()).add(cmd);
+      for (const [event, key] of pairs) (m[event] = m[event] || new Set()).add(key);
       return m;
     };
-    const expected = byEvent(HOOK_SPECS.map((s) => [s.event, s.command]));
+    const expected = byEvent(HOOK_SPECS.map((s) => [s.event, s.matcher + '\u0000' + s.command]));
     const installed = byEvent(
       Object.entries(json.hooks || {}).flatMap(([event, groups]) =>
-        (groups || [])
-          .flatMap((g) => (g.hooks || []).map((h) => String(h.command || '')))
-          .filter((c) => c.includes('tab-status'))
-          .map((c) => [event, c])
+        (groups || []).flatMap((g) =>
+          (g.hooks || [])
+            .map((h) => String(h.command || ''))
+            .filter((c) => c.includes('tab-status'))
+            .map((c) => [event, String(g.matcher || '') + '\u0000' + c])
+        )
       )
     );
     const events = new Set([...Object.keys(expected), ...Object.keys(installed)]);
