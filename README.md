@@ -47,7 +47,7 @@ Six Claude hooks drop a file in `~/.claude/tab-status/`, named `sha256(project p
 - `UserPromptSubmit` → `working` (purely visual, no banner/sound)
 - `Notification` / `PermissionRequest` → `waiting`
 - `PreToolUse` + `AskUserQuestion` → `waiting` (a question needs you too; its own hook, since AskUserQuestion fires neither Stop nor Notification)
-- `PostToolUse` + `AskUserQuestion` → `working` (back to working after you answer, since no new `UserPromptSubmit` fires)
+- `PostToolUse` → `working` (every completed tool call flips back to working, so an answered question or a granted permission doesn't leave the title empty while Claude keeps going)
 - `Stop` → `stop` (done), unless background work is still running, then `working` stays. Subagents, workflows, and monitors count as work (they finish and wake the session); background shell tasks don't, since a dev server Claude started would otherwise hold the working marker forever. Want shell tasks to count? Turn on `claudeRadar.shellTasksKeepWorking`.
 
 Each window watches only its own file and shows the marker from **state + focus**:
