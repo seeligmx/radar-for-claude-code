@@ -103,7 +103,37 @@ function detectBinaries() {
   notifierPath = ['/opt/homebrew/bin/terminal-notifier', '/usr/local/bin/terminal-notifier'].find(
     (p) => fs.existsSync(p)
   );
-  codeCliPath = ['/usr/local/bin/code', '/opt/homebrew/bin/code'].find((p) => fs.existsSync(p));
+  // Prefer the CLI inside the running editor's own bundle (appRoot =
+  // <bundle>.app/Contents/Resources/app, its bin/ ships the CLI): it exists
+  // without the user ever installing the shell command, and it always opens
+  // THIS editor, also on forks (Insiders ships code-insiders, Cursor ships
+  // cursor). The *-tunnel binaries there are not window CLIs. Fall back to
+  // the classic shell-command locations.
+  let hostCli;
+  try {
+    const binDir = path.join(vscode.env.appRoot, 'bin');
+    const name = fs.readdirSync(binDir).filter((n) => !n.includes('tunnel')).sort()[0];
+    if (name) hostCli = path.join(binDir, name);
+  } catch {
+    /* no bin dir (unexpected packaging): fall back */
+  }
+  codeCliPath = hostCli || ['/usr/local/bin/code', '/opt/homebrew/bin/code'].find((p) => fs.existsSync(p));
+}
+
+// Bundle id of the running editor, for the -activate fallback when no CLI
+// was found. Detected once, async; until then the safe default. Hardcoding
+// com.microsoft.VSCode would focus the wrong app on Insiders or Cursor.
+let bundleId = 'com.microsoft.VSCode';
+
+function detectBundleId() {
+  const app = vscode.env.appRoot.split('.app/')[0] + '.app';
+  execFile(
+    '/usr/bin/plutil',
+    ['-extract', 'CFBundleIdentifier', 'raw', path.join(app, 'Contents', 'Info.plist')],
+    (err, stdout) => {
+      if (!err && String(stdout).trim()) bundleId = String(stdout).trim();
+    }
+  );
 }
 
 // For terminal-notifier's -execute string (runs in a shell)
@@ -181,7 +211,7 @@ function notify(label) {
       // Clicking the banner focuses the right window
       args.push('-execute', `${shq(codeCliPath)} ${shq(projectPath)}`);
     } else {
-      args.push('-activate', 'com.microsoft.VSCode');
+      args.push('-activate', bundleId);
     }
     execFile(notifierPath, args, () => {});
   } else {
@@ -453,6 +483,7 @@ async function activate(context) {
 
   await vscode.commands.executeCommand('registerWindowTitleVariable', 'claudeRadarStatus', CONTEXT_KEY);
   await setMarker(null);
+  detectBundleId();
 
   fs.mkdirSync(STATUS_DIR, { recursive: true });
   syncShellFlag();
