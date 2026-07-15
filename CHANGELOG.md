@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.5 - 2026-07-15
+
+- **The working time no longer keeps counting after you interrupt Claude.** Hit `Esc`, fix your typo, send the prompt again, and the clock starts at zero instead of showing minutes you never worked. Fixed.
+- Now spelled out in the README's limits: `Esc` fires no Claude hook at all, so 💬 stays until your next prompt clears it.
+
 ## 1.0.4 - 2026-07-14
 
 - **💬 no longer goes missing on long runs.** Answering a permission prompt used to leave the title empty while Claude kept working. Fixed.

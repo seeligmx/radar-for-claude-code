@@ -29,7 +29,8 @@ const MUTE_FLAG = path.join(STATUS_DIR, '.muted-until');
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
 const CONTEXT_KEY = 'claudeRadar.status';
 const TITLE_VAR = '${claudeRadarStatus}';
-const LABELS = ['working', 'waiting', 'stop'];
+// 'prompt' is 'working' with a reset clock (see check()), not a state of its own.
+const LABELS = ['prompt', 'working', 'waiting', 'stop'];
 const PEEK_MS = 1000; // focused window: show an attention marker briefly, then hide it
 
 // One hook per event, each writes an event label into the marker file.
@@ -78,7 +79,15 @@ const stopMarker =
   `printf '%s' "$lbl" ${WRITE_F}`;
 
 const HOOK_SPECS = [
-  { event: 'UserPromptSubmit', matcher: '', command: writeMarker('working') }, // working (purely visual, no banner/sound)
+  // A new prompt shows 'working' like every other event, but with a fresh
+  // clock: its own label separates "you just sent something" from the
+  // PostToolUse 'working' repeats, which must not reset the time (see
+  // check()). Without it the elapsed time kept running across an interrupted
+  // turn - Esc fires no hook at all (verified against Claude Code 2.1.209:
+  // no Stop, no Notification, nothing), so the old 'working' from the
+  // aborted turn survived into the next one and the title showed minutes
+  // that had never been worked.
+  { event: 'UserPromptSubmit', matcher: '', command: writeMarker('prompt') }, // working, clock restarted (no banner/sound)
   { event: 'Notification', matcher: '', command: writeMarker('waiting') }, // needs you (permission/idle)
   { event: 'PermissionRequest', matcher: '', command: writeMarker('waiting') },
   // A question counts as "needs you" (= waiting); its own hook, because
@@ -545,10 +554,16 @@ async function activate(context) {
         }
       }
       if (!LABELS.includes(label)) label = 'stop'; // unexpected content -> treat as done
-      // The elapsed-time clock starts on the transition INTO 'working' (the
-      // frequent PostToolUse 'working' repeats must not reset it) and stops
-      // on any other event.
-      if (label === 'working') {
+      // The elapsed time counts from your last prompt: 'prompt' (re)starts
+      // the clock unconditionally, the frequent PostToolUse 'working'
+      // repeats only start it when it isn't running, and every other event
+      // stops it. Unconditional here is what fixes an interrupted turn:
+      // Esc fires no hook, so the clock keeps running until the next prompt
+      // - which is exactly this branch.
+      if (label === 'prompt') {
+        workingSince = Date.now();
+        label = 'working';
+      } else if (label === 'working') {
         if (!workingSince) workingSince = Date.now();
       } else {
         workingSince = null;

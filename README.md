@@ -44,7 +44,7 @@ Radar offers to set itself up on first launch and keeps reminding you until it's
 
 Six Claude hooks drop a file in `~/.claude/tab-status/`, named `sha256(project path)` (first 16 hex chars, realpath-resolved so symlinks match). The content is the status:
 
-- `UserPromptSubmit` → `working` (purely visual, no banner/sound)
+- `UserPromptSubmit` → `prompt` (shows `working`, purely visual, no banner/sound; its own label so a new prompt restarts the elapsed-time clock)
 - `Notification` / `PermissionRequest` → `waiting`
 - `PreToolUse` + `AskUserQuestion` → `waiting` (a question needs you too; its own hook, since AskUserQuestion fires neither Stop nor Notification)
 - `PostToolUse` → `working` (every completed tool call flips back to working, so an answered question or a granted permission doesn't leave the title empty while Claude keeps going)
@@ -62,6 +62,7 @@ Stale files (sessions with no matching window) are cleaned up after 24 h.
 
 - The marker is text (emoji) in the title, not a native tab badge, macOS doesn't allow those.
 - `Stop` fires after every response. Fine for the marker and banner (idempotent, one banner per project, focused windows skipped).
+- Interrupting Claude with `Esc` fires no hook at all, so 💬 stays until your next prompt (which clears it, elapsed time included). Nothing Radar can fix from the outside: Claude Code has no interrupt event.
 - Multi-root workspaces: the first folder wins.
 - Two events at once: the later one wins.
 

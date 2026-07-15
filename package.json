@@ -2,7 +2,7 @@
   "name": "radar-for-claude-code",
   "displayName": "Radar for Claude Code: 💬 working, ⚠️ needs you, 🟢 done",
   "description": "Claude Code multitasking, done right. Run it across a handful of projects and each window title shows what its Claude is up to: working, needs you, or done. Turn on native tabs and your tab bar becomes a live status board, so you always know which project to jump to next. Plus a banner and sound when a window's in the background. macOS only.",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "publisher": "seeligmx",
   "author": {
     "name": "Sebastian Seelig (SEELIG™)",
