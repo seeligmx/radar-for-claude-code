@@ -389,8 +389,11 @@ async function installHooks(auto = false) {
   const tmp = SETTINGS_PATH + '.claude-radar.tmp';
   fs.writeFileSync(tmp, JSON.stringify(json, null, 2) + '\n');
   fs.renameSync(tmp, SETTINGS_PATH);
+  // Claude Code reads hooks only when a session starts: one that is already
+  // running keeps writing no markers until it's restarted.
   vscode.window.showInformationMessage(
-    auto ? 'Hooks updated. Backup saved.' : 'Hooks installed. Backup saved.'
+    (auto ? 'Hooks updated' : 'Hooks installed') +
+      '. Backup saved. Claude loads hooks at session start, so restart any session that is already running.'
   );
 }
 
