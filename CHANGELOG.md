@@ -2,8 +2,8 @@
 
 ## 1.0.6 - 2026-07-19
 
-- **The setup now tells you to restart running Claude sessions.** Hooks load when a session starts, so a session that was already running kept writing no markers and a fresh install looked broken. The hint shows after every hook install and lives in the README too.
-- **New demo GIF:** elapsed working time in the markers (💬 12m), all three states side by side, and a banner click that jumps into the right project.
+- **Fresh installs looked broken while a Claude session was still running.** Hooks load at session start, the setup now tells you to restart running sessions. Fixed.
+- **New demo GIF:** 💬 12m · ⚠️ · 🟢 side by side, and the banner click that lands in the right project.
 
 ## 1.0.5 - 2026-07-15
 
