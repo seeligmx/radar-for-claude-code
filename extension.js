@@ -7,11 +7,12 @@
 // 2. Claude Code hooks write a marker file per event to
 //    ~/.claude/tab-status/<sha256(project path)[0..16]>, content = event
 //    label (working | waiting | stop).
-// 3. Each window watches only its own file. When it shows up and the window
-//    is unfocused -> marker in the title + macOS banner with sound
-//    (terminal-notifier, osascript fallback). Focus -> marker cleared.
-//    Focused windows get neither marker nor banner: whoever is watching
-//    doesn't need a ping.
+// 3. Each window watches only its own file. When an attention event
+//    (needs you | done) shows up and the window is unfocused -> marker in
+//    the title + macOS banner with sound (terminal-notifier, osascript
+//    fallback). Focus -> marker cleared. A focused window flashes those
+//    events for a second and never rings: whoever is watching doesn't need
+//    a ping. 'working' is a lasting state, so it stays visible there.
 
 const vscode = require('vscode');
 const { execFile } = require('child_process');
@@ -88,7 +89,16 @@ const HOOK_SPECS = [
   // aborted turn survived into the next one and the title showed minutes
   // that had never been worked.
   { event: 'UserPromptSubmit', matcher: '', command: writeMarker('prompt') }, // working, clock restarted (no banner/sound)
-  { event: 'Notification', matcher: '', command: writeMarker('waiting') }, // needs you (permission/idle)
+  // Notification fires for more than "needs you": the matcher filters on
+  // .notification_type, so list the types that actually wait for the user.
+  // Without it, auth_success, elicitation_complete/-response and
+  // agent_completed each raised ⚠️ with a Basso - a false alarm for
+  // something that had just finished on its own.
+  {
+    event: 'Notification',
+    matcher: 'permission_prompt|idle_prompt|elicitation_dialog|agent_needs_input',
+    command: writeMarker('waiting'),
+  },
   { event: 'PermissionRequest', matcher: '', command: writeMarker('waiting') },
   // A question counts as "needs you" (= waiting); its own hook, because
   // AskUserQuestion fires neither Stop nor Notification.
@@ -291,15 +301,26 @@ function titleHasVariable() {
 
 async function setupTitle() {
   const cfg = vscode.workspace.getConfiguration('window');
-  const info = cfg.inspect('title');
-  const base = (info && (info.globalValue ?? info.defaultValue)) || '';
+  const info = cfg.inspect('title') || {};
+  // Write into the scope that is actually in force: a window.title in
+  // .code-workspace or .vscode/settings.json beats the global one, so writing
+  // to Global there would report success while the variable never takes
+  // effect - and the setup dialog would keep coming back.
+  const wsValue = info.workspaceFolderValue ?? info.workspaceValue;
+  const inWorkspace = wsValue !== undefined;
+  const base = (inWorkspace ? wsValue : info.globalValue ?? info.defaultValue) || '';
   if (base.includes(TITLE_VAR)) {
     vscode.window.showInformationMessage('window.title already has ' + TITLE_VAR + '.');
     return;
   }
-  await cfg.update('title', TITLE_VAR + base, vscode.ConfigurationTarget.Global);
+  await cfg.update(
+    'title',
+    TITLE_VAR + base,
+    inWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global
+  );
   vscode.window.showInformationMessage(
-    'Done. The marker now shows at the left of the title and tab.'
+    'Done. The marker now shows at the left of the title and tab.' +
+      (inWorkspace ? ' Added to this workspace, which overrides your global window.title.' : '')
   );
 }
 
@@ -353,6 +374,39 @@ function hasOwnHooks() {
   }
 }
 
+// Drop only our own entries from a matcher group, never the whole group:
+// users put their own commands into the same group (matcher '' is the
+// canonical form Claude Code itself writes), and those have to survive an
+// update. Groups that end up empty are the ones we created, so they go.
+function stripOwnHooks(groups) {
+  return (groups || [])
+    .map((g) => ({
+      ...g,
+      hooks: (g.hooks || []).filter((h) => !String(h.command || '').includes('tab-status')),
+    }))
+    .filter((g) => g.hooks.length > 0);
+}
+
+// Write ~/.claude/settings.json atomically (tmp + rename) without changing
+// what the file is. rename(2) replaces a symlink instead of following it, so
+// resolve the real target first (dotfiles repos link this file), and carry
+// the existing permissions over: Claude Code creates it with 600, and a
+// default tmp file would silently widen that to 644.
+function writeSettings(json) {
+  let target = SETTINGS_PATH;
+  let mode = 0o600;
+  try {
+    target = fs.realpathSync(SETTINGS_PATH);
+    mode = fs.statSync(target).mode & 0o777;
+  } catch {
+    /* not there yet: create it at the plain path with 600 */
+  }
+  const tmp = target + '.claude-radar.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(json, null, 2) + '\n', { mode });
+  fs.chmodSync(tmp, mode); // mode above only applies on create, not to a leftover tmp file
+  fs.renameSync(tmp, target);
+}
+
 async function installHooks(auto = false) {
   let json = {};
   let existed = false;
@@ -371,9 +425,7 @@ async function installHooks(auto = false) {
   const before = JSON.stringify(json.hooks);
   for (const spec of HOOK_SPECS) {
     // Remove our own stale entries (upgrade), then insert fresh
-    const groups = (json.hooks[spec.event] = json.hooks[spec.event] || []).filter(
-      (g) => !(g.hooks || []).some((h) => String(h.command || '').includes('tab-status'))
-    );
+    const groups = stripOwnHooks(json.hooks[spec.event]);
     groups.push({ matcher: spec.matcher, hooks: [{ type: 'command', command: spec.command }] });
     json.hooks[spec.event] = groups;
   }
@@ -385,10 +437,7 @@ async function installHooks(auto = false) {
   }
   if (existed) fs.copyFileSync(SETTINGS_PATH, SETTINGS_PATH + '.claude-radar.bak');
   fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
-  // Write atomically so a crash mid-write can't corrupt the Claude config
-  const tmp = SETTINGS_PATH + '.claude-radar.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(json, null, 2) + '\n');
-  fs.renameSync(tmp, SETTINGS_PATH);
+  writeSettings(json);
   // Claude Code reads hooks only when a session starts: one that is already
   // running keeps writing no markers until it's restarted.
   vscode.window.showInformationMessage(
@@ -397,22 +446,29 @@ async function installHooks(auto = false) {
   );
 }
 
-// Uninstall path: VS Code runs no extension code on uninstall, so the user
-// removes the hooks beforehand via this command. Only our own (tab-status)
-// hooks; others stay.
+// Uninstall path: a "vscode:uninstall" script in the manifest could do this
+// automatically, but rewriting ~/.claude/settings.json unasked is exactly
+// what this extension avoids everywhere else, so removal stays an explicit
+// command. Only our own (tab-status) hooks; others stay.
 async function removeHooks() {
   let json;
   try {
     json = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
-  } catch {
-    vscode.window.showInformationMessage('No Claude settings found, nothing to remove.');
+  } catch (e) {
+    // An unreadable file is not an absent one: "nothing to remove" would
+    // claim the hooks are gone while they are still installed.
+    if (fs.existsSync(SETTINGS_PATH)) {
+      vscode.window.showErrorMessage(
+        "~/.claude/settings.json isn't valid JSON, so no hooks were removed: " + e.message
+      );
+    } else {
+      vscode.window.showInformationMessage('No Claude settings found, nothing to remove.');
+    }
     return;
   }
   const before = JSON.stringify(json.hooks || {});
   for (const event of Object.keys(json.hooks || {})) {
-    json.hooks[event] = (json.hooks[event] || []).filter(
-      (g) => !(g.hooks || []).some((h) => String(h.command || '').includes('tab-status'))
-    );
+    json.hooks[event] = stripOwnHooks(json.hooks[event]);
     if (json.hooks[event].length === 0) delete json.hooks[event];
   }
   if (JSON.stringify(json.hooks || {}) === before) {
@@ -420,9 +476,7 @@ async function removeHooks() {
     return;
   }
   fs.copyFileSync(SETTINGS_PATH, SETTINGS_PATH + '.claude-radar.bak');
-  const tmp = SETTINGS_PATH + '.claude-radar.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(json, null, 2) + '\n');
-  fs.renameSync(tmp, SETTINGS_PATH);
+  writeSettings(json);
   vscode.window.showInformationMessage('Radar for Claude Code hooks removed. Backup saved.');
 }
 
@@ -639,7 +693,14 @@ async function activate(context) {
         setMarker(currentLabel);
       }
     }),
-    vscode.commands.registerCommand('claudeRadar.clear', () => setMarker(null)),
+    vscode.commands.registerCommand('claudeRadar.clear', () => {
+      // Drop the state too, not just the marker: the one real use case is an
+      // Esc-interrupted turn (no hook fires for it), and with 'working' left
+      // standing the next timeTick or focus change would put 💬 right back.
+      currentLabel = null;
+      workingSince = null;
+      return setMarker(null);
+    }),
     vscode.commands.registerCommand('claudeRadar.installHooks', () => installHooks()),
     vscode.commands.registerCommand('claudeRadar.removeHooks', removeHooks),
     vscode.commands.registerCommand('claudeRadar.setupTitle', setupTitle),
