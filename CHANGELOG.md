@@ -2,12 +2,12 @@
 
 ## 1.0.7 - 2026-07-25
 
-- **Your own Claude hooks stay put.** Installing or updating Radar's hooks dropped the entire matcher group, taking a command of yours in the same group with it. Only Radar's own entries are touched now. Fixed.
-- **`~/.claude/settings.json` keeps its permissions and its symlink.** Radar wrote it back as a plain 644 file, widening a 600 config and replacing a dotfiles symlink with a real file. Fixed.
-- **Setup no longer reports a success it can't deliver.** With a `window.title` set in your workspace, Radar wrote the marker variable to the global settings, where it never took effect, and still said "Done." It now writes into the scope that actually wins. Fixed.
-- **⚠️ only for things that really wait for you.** A successful login or a finished background agent used to raise the needs-you marker with a sound. Fixed.
-- **"Clear marker" now sticks.** A marker left over from an `Esc`-interrupted turn came back a minute later. Fixed.
-- Radar stays enabled in VS Code's Restricted Mode.
+- **Fixed:** Radar leaves your other Claude hooks alone. Installing or updating its own used to drop commands of yours that shared a hook group.
+- **Fixed:** Setup works when your workspace sets its own `window.title`. Radar wrote the marker variable where it could never take effect, and still said "Done."
+- **Fixed:** ⚠️ only shows up when something really waits for you. A finished login or background agent no longer rings.
+- **Fixed:** `~/.claude/settings.json` keeps its permissions and its symlink when Radar writes to it.
+- **Fixed:** "Clear marker" stays cleared. A marker left over from an `Esc`-interrupted turn used to come back a minute later.
+- **Added:** Radar works in VS Code's Restricted Mode.
 
 ## 1.0.6 - 2026-07-19
 
