@@ -2,12 +2,12 @@
 
 ## 1.0.7 - 2026-07-25
 
+- **Added:** Radar works in VS Code's Restricted Mode.
 - **Fixed:** Radar leaves your other Claude hooks alone. Installing or updating its own used to drop commands of yours that shared a hook group.
 - **Fixed:** Setup works when your workspace sets its own `window.title`. Radar wrote the marker variable where it could never take effect, and still said "Done."
 - **Fixed:** ⚠️ only shows up when something really waits for you. A finished login or background agent no longer rings.
 - **Fixed:** `~/.claude/settings.json` keeps its permissions and its symlink when Radar writes to it.
 - **Fixed:** "Clear marker" stays cleared. A marker left over from an `Esc`-interrupted turn used to come back a minute later.
-- **Added:** Radar works in VS Code's Restricted Mode.
 
 ## 1.0.6 - 2026-07-19
 
