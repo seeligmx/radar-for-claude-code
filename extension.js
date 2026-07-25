@@ -481,8 +481,11 @@ async function removeHooks() {
 }
 
 // Setup is required: without the title variable and the hooks, no marker can
-// ever appear. Re-offer on activation until it's done, rate-limited to once
-// per hour so several windows don't stack dialogs, with a permanent opt-out.
+// ever appear. Re-offer on activation until it's done, with a permanent
+// opt-out. The hourly rate limit keeps the offer from returning at every
+// window you open; it does not help on a cold start, where all windows read
+// the same unset timestamp and each shows the dialog. That costs N
+// idempotent info toasts once, which beats a lock file.
 async function maybeOfferSetup(context) {
   if (context.globalState.get('setupDeclined')) return;
   if (titleHasVariable() && hooksInstalled()) return;
