@@ -51,6 +51,12 @@
   "extensionKind": [
     "ui"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true,
+      "description": "Radar never runs code from the workspace. It only watches its own marker files in ~/.claude/tab-status and shows a title marker."
+    }
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
