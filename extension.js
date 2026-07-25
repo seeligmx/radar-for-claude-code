@@ -218,7 +218,9 @@ function isMuted() {
   return false;
 }
 
-function notify(label) {
+// ranFor: elapsed label of the finished run ('14m'), empty below a minute
+// or when the state was never 'working'.
+function notify(label, ranFor = '') {
   const cfg = vscode.workspace.getConfiguration('claudeRadar');
   if (!cfg.get('banner', true)) return;
   if (isMuted()) return;
@@ -228,7 +230,7 @@ function notify(label) {
   const projectName = folder ? folder.name : 'VS Code';
   const projectPath = folder ? folder.uri.fsPath : '';
   const done = label === 'stop';
-  const subtitle = done ? 'Done' : 'Needs you';
+  const subtitle = done ? (ranFor ? 'Done after ' + ranFor : 'Done') : 'Needs you';
   const sound = done ? cfg.get('soundDone', 'Glass') : cfg.get('soundWaiting', 'Basso');
 
   if (notifierPath) {
@@ -614,6 +616,10 @@ async function activate(context) {
         }
       }
       if (!LABELS.includes(label)) label = 'stop'; // unexpected content -> treat as done
+      // How long the run took, read before the state below clears it: the
+      // done banner reports it, which is the first thing you want to know
+      // when one pops up after you've been away. Empty below a minute.
+      const ranFor = label === 'stop' && workingSince ? elapsedLabel(workingSince) : '';
       // The elapsed time counts from your last prompt: 'prompt' (re)starts
       // the clock unconditionally, the frequent PostToolUse 'working'
       // repeats only start it when it isn't running, and every other event
@@ -650,7 +656,7 @@ async function activate(context) {
         return;
       }
       setMarker(label);
-      notify(label);
+      notify(label, ranFor);
     };
     const ownName = path.basename(file);
     let debounce;

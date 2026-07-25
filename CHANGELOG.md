@@ -2,6 +2,7 @@
 
 ## 1.0.7 - 2026-07-25
 
+- **Feature:** The done banner says how long the run took: "Done after 23m". Below a minute it just says "Done".
 - **Added:** Radar works in VS Code's Restricted Mode.
 - **Fixed:** Radar leaves your other Claude hooks alone. Installing or updating its own used to drop commands of yours that shared a hook group.
 - **Fixed:** Setup works when your workspace sets its own `window.title`. Radar wrote the marker variable where it could never take effect, and still said "Done."
