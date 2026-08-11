@@ -3,6 +3,7 @@
 ## 1.1.0 - 2026-08-11
 
 - **Feature:** The working marker counts the subagents running in your project: `💬 14m 🤖8`. Watch a multi-agent review fan out and wind down, straight from the tab bar. The symbol is configurable via `claudeRadar.markerAgents`; empty hides the count.
+- **Updated:** New demo GIF showing the agent count in action, in a flat look with a transparent background that blends into GitHub's dark and light mode.
 
 ## 1.0.7 - 2026-07-25
 
