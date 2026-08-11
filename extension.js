@@ -175,6 +175,86 @@ function markerFile() {
 // opt-in elapsed time in the marker (💬 14m).
 let workingSince = null;
 
+// Live count of running subagents (💬 14m 🤖8). Claude Code keeps one
+// transcript per subagent under ~/.claude/projects/<slug>/<session>/subagents/
+// (workflow agents one level deeper, in workflows/<runId>/). A transcript
+// appended to within AGENT_ACTIVE_MS counts as a running agent: agents write
+// on every message, so longer silence means finished - or stuck in one long
+// tool call, which is why the window is generous rather than tight (the
+// count may briefly dip while an agent sits in a long build). Read-only
+// polling instead of hook events: SubagentStop can be missed (Esc, kill),
+// and a missed event would leave a counter stuck forever; mtimes self-heal.
+const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
+const AGENT_ACTIVE_MS = 120000;
+const AGENT_POLL_MS = 10000;
+let agentCount = 0;
+
+// <slug> = the realpath-resolved project path with every non-alphanumeric
+// UTF-16 unit replaced by '-', exactly how Claude Code names these folders
+// (verified against real transcript dirs, including __ and emoji paths).
+function agentTranscriptRoot() {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) return undefined;
+  let p = folders[0].uri.fsPath;
+  try {
+    p = fs.realpathSync(p);
+  } catch {
+    /* folder unresolvable: slug the unresolved path, like markerFile() */
+  }
+  return path.join(PROJECTS_DIR, p.replace(/[^a-zA-Z0-9]/g, '-'));
+}
+
+function countActiveAgents() {
+  const root = agentTranscriptRoot();
+  if (!root) return 0;
+  const cutoff = Date.now() - AGENT_ACTIVE_MS;
+  let sessions;
+  try {
+    sessions = fs.readdirSync(root);
+  } catch {
+    return 0; // project has no transcripts yet
+  }
+  let n = 0;
+  for (const session of sessions) {
+    // Non-session entries (the *.jsonl transcripts themselves, memory/) fail
+    // the readdirs below and fall through; cheaper than stat-filtering first.
+    const sub = path.join(root, session, 'subagents');
+    const dirs = [sub];
+    try {
+      for (const wf of fs.readdirSync(path.join(sub, 'workflows'))) {
+        dirs.push(path.join(sub, 'workflows', wf));
+      }
+    } catch {
+      /* no workflow agents in this session, fine */
+    }
+    for (const dir of dirs) {
+      let names;
+      try {
+        names = fs.readdirSync(dir);
+      } catch {
+        continue; // no subagents in this session
+      }
+      for (const name of names) {
+        if (!name.startsWith('agent-') || !name.endsWith('.jsonl')) continue;
+        try {
+          if (fs.statSync(path.join(dir, name)).mtimeMs > cutoff) n++;
+        } catch {
+          /* vanished mid-scan, fine */
+        }
+      }
+    }
+  }
+  return n;
+}
+
+// Refresh agentCount; true when it changed (caller then redraws the marker).
+function updateAgentCount() {
+  const n = countActiveAgents();
+  if (n === agentCount) return false;
+  agentCount = n;
+  return true;
+}
+
 // '' below one minute, then '14m', from an hour on '1h05'.
 function elapsedLabel(since) {
   const m = Math.floor((Date.now() - since) / 60000);
@@ -199,9 +279,14 @@ function setMarker(label) {
       const t = elapsedLabel(workingSince);
       if (t) time = ' ' + t;
     }
+    let agents = '';
+    if (label === 'working' && agentCount > 0) {
+      const agentSymbol = cfg.get('markerAgents', '🤖').trim();
+      if (agentSymbol) agents = ' ' + agentSymbol + agentCount;
+    }
     // We add the separating space ourselves so it doesn't have to be
     // maintained in the settings (empty symbol -> no prefix at all).
-    marker = symbol ? symbol + time + ' ' : '';
+    marker = symbol ? symbol + time + agents + ' ' : '';
   }
   return vscode.commands.executeCommand('setContext', CONTEXT_KEY, marker);
 }
@@ -594,6 +679,13 @@ async function activate(context) {
   }, 60000);
   context.subscriptions.push({ dispose: () => clearInterval(timeTick) });
 
+  // Poll the agent count only while 'working' is on display; any other state
+  // skips the scan entirely, so an idle window costs nothing.
+  const agentTick = setInterval(() => {
+    if (currentLabel === 'working' && updateAgentCount()) setMarker('working');
+  }, AGENT_POLL_MS);
+  context.subscriptions.push({ dispose: () => clearInterval(agentTick) });
+
   const file = markerFile();
   if (file) {
     const check = () => {
@@ -634,12 +726,17 @@ async function activate(context) {
       } else {
         workingSince = null;
       }
+      const wasWorking = currentLabel === 'working';
       currentLabel = label;
       clearTimeout(peekTimer); // a running peek must never overwrite a new event
       // 'working' is a lasting state and always visible (even in the active
       // window), never with banner/sound -> no flicker on focus changes
       // while Claude is working.
       if (label === 'working') {
+        // Entering 'working' counts agents right away instead of waiting up
+        // to a poll tick; the frequent PostToolUse repeats don't re-scan,
+        // check() has to stay cheap.
+        if (!wasWorking) updateAgentCount();
         setMarker('working');
         return;
       }
@@ -682,8 +779,13 @@ async function activate(context) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('claudeRadar.shellTasksKeepWorking')) syncShellFlag();
-      // Toggling the time display shows up right away, not on the next tick
-      if (e.affectsConfiguration('claudeRadar.showWorkingTime') && currentLabel === 'working')
+      // Toggling the time display or the agent symbol shows up right away,
+      // not on the next tick
+      if (
+        (e.affectsConfiguration('claudeRadar.showWorkingTime') ||
+          e.affectsConfiguration('claudeRadar.markerAgents')) &&
+        currentLabel === 'working'
+      )
         setMarker('working');
     }),
     vscode.window.onDidChangeWindowState((s) => {
@@ -708,6 +810,7 @@ async function activate(context) {
       // standing the next timeTick or focus change would put 💬 right back.
       currentLabel = null;
       workingSince = null;
+      agentCount = 0;
       return setMarker(null);
     }),
     vscode.commands.registerCommand('claudeRadar.installHooks', () => installHooks()),

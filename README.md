@@ -15,7 +15,7 @@
 
 ## Two features, one glance
 
-- **Live status in every window title.** 💬 working, ⚠️ needs you, 🟢 done. Every project, one look.
+- **Live status in every window title.** 💬 working, ⚠️ needs you, 🟢 done. Every project, one look. When Claude fans out into subagents (a multi-agent review, a workflow), the title also shows how many are running right now: `💬 14m 🤖8`.
 - **macOS banners and sounds.** A background window pings you when it needs you or finishes, one click jumps right in. The window you're looking at stays quiet.
 
 ## Tips
@@ -36,7 +36,7 @@ Radar offers to set itself up on first launch and keeps reminding you until it's
 ## Privacy, performance & trust
 
 - **No network, no telemetry.** Everything happens in local files.
-- **Event-driven, not polling.** Idle cost is effectively zero.
+- **Event-driven, not polling.** Idle cost is effectively zero. One exception: the agent count is a light scan every 10 s, and only while the working marker shows.
 - **Safe config writes.** Atomic, with a backup. Removal is one command.
 - **Open source.** [Full code on GitHub](https://github.com/seeligmx/radar-for-claude-code).
 
@@ -56,6 +56,8 @@ Each window watches only its own file and shows the marker from **state + focus*
 - `needs you` / `done` show a persistent marker and banner only when the window's in the background (banner via `terminal-notifier`, a click focuses the right window). In the active window they flash for ~1 s ("peek") and fade.
 - Focusing a window clears an attention marker; `working` stays, since Claude's still going.
 
+While `working` shows, Radar also counts the subagents running in this project: Claude Code keeps one transcript file per agent under `~/.claude/projects/`, and a transcript written to within the last two minutes counts as a running agent (checked every 10 s, read-only). That's the 🤖8 in the title.
+
 Stale files (sessions with no matching window) are cleaned up after 24 h.
 
 ## Limits
@@ -63,6 +65,7 @@ Stale files (sessions with no matching window) are cleaned up after 24 h.
 - The marker is text (emoji) in the title, not a native tab badge, macOS doesn't allow those.
 - `Stop` fires after every response. Fine for the marker and banner (idempotent, one banner per project, focused windows skipped).
 - Interrupting Claude with `Esc` fires no hook at all, so 💬 stays until your next prompt (which clears it, elapsed time included). Nothing Radar can fix from the outside: Claude Code has no interrupt event.
+- The agent count reads transcript activity: an agent that goes silent for over two minutes (say, inside one long build command) drops out of the count until it writes again. Agents running in Anthropic's cloud leave no local transcripts and aren't counted.
 - Multi-root workspaces: the first folder wins.
 - Two events at once: the later one wins.
 
@@ -74,6 +77,7 @@ Give just the symbol, the space is added for you. Empty means no marker for that
 | --- | --- | --- |
 | `claudeRadar.markerWorking` | `💬` | while Claude is working |
 | `claudeRadar.showWorkingTime` | `true` | show the elapsed time in the working marker (`💬 14m`) |
+| `claudeRadar.markerAgents` | `🤖` | prefix for the count of running subagents (`💬 14m 🤖8`); empty hides the count |
 | `claudeRadar.markerWaiting` | `⚠️` | when Claude needs you |
 | `claudeRadar.markerDone` | `🟢` | when Claude is done |
 | `claudeRadar.banner` | `true` | macOS banner on/off |

@@ -2,7 +2,7 @@
   "name": "radar-for-claude-code",
   "displayName": "Radar for Claude Code: 💬 working, ⚠️ needs you, 🟢 done",
   "description": "Claude Code multitasking, done right. Run it across a handful of projects and each window title shows what its Claude is up to: working, needs you, or done. Turn on native tabs and your tab bar becomes a live status board, so you always know which project to jump to next. Plus a banner and sound when a window's in the background. macOS only.",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "publisher": "seeligmx",
   "author": {
     "name": "Sebastian Seelig (SEELIG™)",
@@ -100,6 +100,11 @@
           "type": "boolean",
           "default": true,
           "description": "Append how long Claude has been working to the working marker (💬 14m). Updates once a minute."
+        },
+        "claudeRadar.markerAgents": {
+          "type": "string",
+          "default": "🤖",
+          "description": "Shown before the number of subagents currently running in this project (💬 14m 🤖8), e.g. during a multi-agent review. Just the emoji; empty hides the count."
         },
         "claudeRadar.markerWaiting": {
           "type": "string",
