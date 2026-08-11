@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.8 - 2026-08-11
+## 1.1.0 - 2026-08-11
 
 - **Feature:** The working marker counts the subagents running in your project: `💬 14m 🤖8`. Watch a multi-agent review fan out and wind down, straight from the tab bar. The symbol is configurable via `claudeRadar.markerAgents`; empty hides the count.
 

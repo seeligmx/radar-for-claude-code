@@ -3,7 +3,7 @@
   Radar for Claude Code
 </h1>
 
-<p align="center"><strong>💬 working&ensp;·&ensp;⚠️ needs you&ensp;·&ensp;🟢 done</strong></p>
+<p align="center"><strong>💬 working&ensp;·&ensp;⚠️ needs you&ensp;·&ensp;🟢 done&ensp;·&ensp;🤖 agents</strong></p>
 
 <p align="center">
   <a href="https://marketplace.visualstudio.com/items?itemName=seeligmx.radar-for-claude-code"><img src="https://badgen.net/vs-marketplace/v/seeligmx.radar-for-claude-code?color=ff4d1f&label=VS%20Code%20Marketplace" alt="VS Code Marketplace"></a>&emsp;<a href="https://seelig.mx"><img src="https://img.shields.io/badge/Made%20by-SEELIG%E2%84%A2-white" alt="Made by SEELIG"></a>&emsp;<a href="https://x.com/seeligmx"><img src="https://img.shields.io/badge/Follow%20on%20X-%40seeligmx-white" alt="Follow @seeligmx on X"></a>
@@ -13,9 +13,10 @@
 
 **Claude Code multitasking, done right.** Run Claude across several projects and always know which one needs you, without clicking through window after window.
 
-## Two features, one glance
+## Three features, one glance
 
-- **Live status in every window title.** 💬 working, ⚠️ needs you, 🟢 done. Every project, one look. When Claude fans out into subagents (a multi-agent review, a workflow), the title also shows how many are running right now: `💬 14m 🤖8`.
+- **Live status in every window title.** 💬 working, ⚠️ needs you, 🟢 done. Every project, one look.
+- **Live agent count.** Claude fans out into subagents for a big review or a workflow? The title counts them while they run: `💬 14m 🤖8`.
 - **macOS banners and sounds.** A background window pings you when it needs you or finishes, one click jumps right in. The window you're looking at stays quiet.
 
 ## Tips
