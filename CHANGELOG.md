@@ -1,9 +1,11 @@
 # Changelog
 
-## Unreleased - 2026-08-23
+## 1.1.1 - 2026-08-23
 
+- **Feature:** A turn that ends by asking you something now shows ⚠️ instead of 🟢. Claude Code reports a typed question as a plain turn end, so until now the question sat there behind a green "done" marker. Turn it off with `claudeRadar.detectQuestions`.
 - **Feature:** Markers clean up after themselves. Interrupt with `Esc`, quit Claude, close the terminal: instead of a 💬 that keeps counting minutes nobody is working, the marker goes within 10 seconds. Radar cross-checks the sessions Claude Code lists in `~/.claude/sessions/` and reads the tail of the session transcript, which records the `Esc` interrupt that fires no hook.
 - **Feature:** A turn that ended on a failed tool call shows 🔴 instead of 🟢, with its own sound. Only the turn's last tool call counts, so a failure Claude recovered from still ends green. Configurable via `claudeRadar.markerError` and `claudeRadar.soundError`.
+- **Added:** `claudeRadar.minDoneSeconds` holds back the done banner for turns shorter than you care about. Questions, permissions, and failures always notify, however short the turn was.
 - **Updated:** The README no longer claims an `Esc`-interrupted turn is beyond Radar's reach. It only means the marker goes on the next check instead of instantly.
 
 ## 1.1.0 - 2026-08-11
