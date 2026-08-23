@@ -334,7 +334,7 @@ let sawInterrupt = false;
 // The turn's closing words. A turn that ends by asking something needs you
 // just as much as a permission prompt does, but Claude Code reports it as a
 // plain Stop - so the marker used to say "done" and the question sat there
-// unanswered. Measured over 1579 real turn endings, 4 % close with a question.
+// unanswered. Measured over 7528 real turn endings, 3 % close with a question.
 let lastAssistantText = '';
 // True while the most recent tool call failed. Measured over 1464 real turns:
 // "the last tool_result was an error" marks 2 %, while "any error somewhere in

@@ -71,7 +71,7 @@ Stale files (sessions with no matching window) are cleaned up after 24 h.
 - Interrupting Claude with `Esc` still fires no hook, so the marker clears on the next sweep (within 10 s) rather than instantly.
 - Marker verification needs `~/.claude/sessions/`, which older Claude Code versions don't write. Without it Radar leaves every marker alone, exactly as before.
 - 🔴 reports a failed *tool call*, not a failed task. Claude explaining that something can't be done ends green.
-- Question detection reads the last non-empty line of Claude's closing text. A question phrased mid-paragraph, or one without a question mark, ends green. Measured across 1579 real turn endings, 4 % close on a question.
+- Question detection reads the last non-empty line of Claude's closing text. A question phrased mid-paragraph, or one without a question mark, ends green. Measured across 7528 real turn endings, 3 % close on a question.
 - The agent count reads transcript activity: an agent that goes silent for over two minutes (say, inside one long build command) drops out of the count until it writes again. Agents running in Anthropic's cloud leave no local transcripts and aren't counted.
 - Multi-root workspaces: the first folder wins.
 - Two events at once: the later one wins.
