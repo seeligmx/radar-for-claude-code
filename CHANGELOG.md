@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - 2026-08-23
+
+- **Feature:** Markers clean up after themselves. Interrupt with `Esc`, quit Claude, close the terminal: instead of a 💬 that keeps counting minutes nobody is working, the marker goes within 10 seconds. Radar cross-checks the sessions Claude Code lists in `~/.claude/sessions/` and reads the tail of the session transcript, which records the `Esc` interrupt that fires no hook.
+- **Feature:** A turn that ended on a failed tool call shows 🔴 instead of 🟢, with its own sound. Only the turn's last tool call counts, so a failure Claude recovered from still ends green. Configurable via `claudeRadar.markerError` and `claudeRadar.soundError`.
+- **Updated:** The README no longer claims an `Esc`-interrupted turn is beyond Radar's reach. It only means the marker goes on the next check instead of instantly.
+
 ## 1.1.0 - 2026-08-11
 
 - **Feature:** The working marker counts the subagents running in your project: `💬 14m 🤖8`. Watch a multi-agent review fan out and wind down, straight from the tab bar. The symbol is configurable via `claudeRadar.markerAgents`; empty hides the count.
