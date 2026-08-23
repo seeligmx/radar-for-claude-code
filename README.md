@@ -3,7 +3,7 @@
   Radar for Claude Code
 </h1>
 
-<p align="center"><strong>💬 working&ensp;·&ensp;⚠️ needs you&ensp;·&ensp;🟢 done&ensp;·&ensp;🤖 agents</strong></p>
+<p align="center"><strong>💬 working&ensp;·&ensp;⚠️ needs you&ensp;·&ensp;🟢 done&ensp;·&ensp;🔴 failed&ensp;·&ensp;🤖 agents</strong></p>
 
 <p align="center">
   <a href="https://marketplace.visualstudio.com/items?itemName=seeligmx.radar-for-claude-code"><img src="https://badgen.net/vs-marketplace/v/seeligmx.radar-for-claude-code?color=ff4d1f&label=VS%20Code%20Marketplace" alt="VS Code Marketplace"></a>&emsp;<a href="https://seelig.mx"><img src="https://img.shields.io/badge/Made%20by-SEELIG%E2%84%A2-white" alt="Made by SEELIG"></a>&emsp;<a href="https://x.com/seeligmx"><img src="https://img.shields.io/badge/Follow%20on%20X-%40seeligmx-white" alt="Follow @seeligmx on X"></a>
@@ -13,10 +13,11 @@
 
 **Claude Code multitasking, done right.** Run Claude across several projects and always know which one needs you, without clicking through window after window.
 
-## Three features, one glance
+## Four features, one glance
 
-- **Live status in every window title.** 💬 working, ⚠️ needs you, 🟢 done. Every project, one look.
+- **Live status in every window title.** 💬 working, ⚠️ needs you, 🟢 done, 🔴 ended on a failed tool call. Every project, one look.
 - **Live agent count.** Claude fans out into subagents for a big review or a workflow? The title counts them while they run: `💬 14m 🤖8`.
+- **Markers that clean up after themselves.** Interrupted with `Esc`, Claude quit, terminal closed? The marker goes, instead of claiming work that stopped ten minutes ago.
 - **macOS banners and sounds.** A background window pings you when it needs you or finishes, one click jumps right in. The window you're looking at stays quiet.
 
 ## Tips
@@ -37,7 +38,7 @@ Radar offers to set itself up on first launch and keeps reminding you until it's
 ## Privacy, performance & trust
 
 - **No network, no telemetry.** Everything happens in local files.
-- **Event-driven, not polling.** Idle cost is effectively zero. One exception: the agent count is a light scan every 10 s, and only while the working marker shows.
+- **Event-driven, not polling.** Idle cost is effectively zero. One exception: while a marker is on display, a light scan runs every 10 s (agent count, and whether a Claude is still alive here). With an empty title, the normal state, nothing runs at all.
 - **Safe config writes.** Atomic, with a backup. Removal is one command.
 - **Open source.** [Full code on GitHub](https://github.com/seeligmx/radar-for-claude-code).
 
@@ -49,7 +50,7 @@ Six Claude hooks drop a file in `~/.claude/tab-status/`, named `sha256(project p
 - `Notification` / `PermissionRequest` → `waiting`
 - `PreToolUse` + `AskUserQuestion` → `waiting` (a question needs you too; its own hook, since AskUserQuestion fires neither Stop nor Notification)
 - `PostToolUse` → `working` (every completed tool call flips back to working, so an answered question or a granted permission doesn't leave the title empty while Claude keeps going)
-- `Stop` → `stop` (done), unless background work is still running, then `working` stays. Subagents, workflows, and monitors count as work (they finish and wake the session); background shell tasks don't, since a dev server Claude started would otherwise hold the working marker forever. Want shell tasks to count? Turn on `claudeRadar.shellTasksKeepWorking`.
+- `Stop` → `stop` (done, or 🔴 when the turn's last tool call failed), unless background work is still running, then `working` stays. Subagents, workflows, and monitors count as work (they finish and wake the session); background shell tasks don't, since a dev server Claude started would otherwise hold the working marker forever. Want shell tasks to count? Turn on `claudeRadar.shellTasksKeepWorking`.
 
 Each window watches only its own file and shows the marker from **state + focus**:
 
@@ -59,13 +60,17 @@ Each window watches only its own file and shows the marker from **state + focus*
 
 While `working` shows, Radar also counts the subagents running in this project: Claude Code keeps one transcript file per agent under `~/.claude/projects/`, and a transcript written to within the last two minutes counts as a running agent (checked every 10 s, read-only). That's the 🤖8 in the title.
 
+While a marker is on display, Radar also verifies it. Claude Code lists every running session in `~/.claude/sessions/<pid>.json` with its working directory; if no live process belongs to this project any more, the marker was lying and goes. The same pass reads the tail of the session transcript, which records two things no hook reports: an `Esc` interrupt (the marker goes, deliberately without a "done" marker, since nothing finished) and a failed tool call. Only the turn's *last* tool result counts for 🔴, so a failure Claude recovered from in the same turn still ends green. Measured across 1464 real turns, that marks 2 % of them.
+
 Stale files (sessions with no matching window) are cleaned up after 24 h.
 
 ## Limits
 
 - The marker is text (emoji) in the title, not a native tab badge, macOS doesn't allow those.
 - `Stop` fires after every response. Fine for the marker and banner (idempotent, one banner per project, focused windows skipped).
-- Interrupting Claude with `Esc` fires no hook at all, so 💬 stays until your next prompt (which clears it, elapsed time included). Nothing Radar can fix from the outside: Claude Code has no interrupt event.
+- Interrupting Claude with `Esc` still fires no hook, so the marker clears on the next sweep (within 10 s) rather than instantly.
+- Marker verification needs `~/.claude/sessions/`, which older Claude Code versions don't write. Without it Radar leaves every marker alone, exactly as before.
+- 🔴 reports a failed *tool call*, not a failed task. Claude explaining that something can't be done ends green.
 - The agent count reads transcript activity: an agent that goes silent for over two minutes (say, inside one long build command) drops out of the count until it writes again. Agents running in Anthropic's cloud leave no local transcripts and aren't counted.
 - Multi-root workspaces: the first folder wins.
 - Two events at once: the later one wins.
@@ -81,7 +86,9 @@ Give just the symbol, the space is added for you. Empty means no marker for that
 | `claudeRadar.markerAgents` | `🤖` | prefix for the count of running subagents (`💬 14m 🤖8`); empty hides the count |
 | `claudeRadar.markerWaiting` | `⚠️` | when Claude needs you |
 | `claudeRadar.markerDone` | `🟢` | when Claude is done |
+| `claudeRadar.markerError` | `🔴` | when the turn ended on a failed tool call |
 | `claudeRadar.banner` | `true` | macOS banner on/off |
 | `claudeRadar.soundWaiting` | `Basso` | sound when needs you (empty = silent) |
 | `claudeRadar.soundDone` | `Glass` | sound when done (empty = silent) |
+| `claudeRadar.soundError` | `Basso` | sound when a turn ended on a failed tool call |
 | `claudeRadar.shellTasksKeepWorking` | `false` | background shell tasks (e.g. a dev server) keep the working marker |

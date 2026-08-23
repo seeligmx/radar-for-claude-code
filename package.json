@@ -61,6 +61,9 @@
     "onStartupFinished"
   ],
   "main": "./extension.js",
+  "scripts": {
+    "test": "node --test --test-force-exit test/*.test.js"
+  },
   "contributes": {
     "commands": [
       {
@@ -116,6 +119,11 @@
           "default": "🟢",
           "description": "Shown when Claude is done. Just the emoji."
         },
+        "claudeRadar.markerError": {
+          "type": "string",
+          "default": "🔴",
+          "description": "Shown instead of the done marker when the turn ended on a failed tool call. Just the emoji; empty falls back to no marker."
+        },
         "claudeRadar.banner": {
           "type": "boolean",
           "default": true,
@@ -130,6 +138,11 @@
           "type": "string",
           "default": "Glass",
           "description": "Sound when Claude is done. Empty for silent."
+        },
+        "claudeRadar.soundError": {
+          "type": "string",
+          "default": "Basso",
+          "description": "Sound when a turn ended on a failed tool call. Empty for silent."
         },
         "claudeRadar.shellTasksKeepWorking": {
           "type": "boolean",

@@ -28,6 +28,9 @@ const SHELL_FLAG = path.join(STATUS_DIR, '.shell-keeps-working');
 // silent. Lives in the shared status dir so one command mutes every window.
 const MUTE_FLAG = path.join(STATUS_DIR, '.muted-until');
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
+// One file per running Claude session, holding at least { pid, sessionId, cwd }
+// (verified against 2.1.241). See liveSessionsHere() for what Radar reads it for.
+const SESSIONS_DIR = path.join(os.homedir(), '.claude', 'sessions');
 const CONTEXT_KEY = 'claudeRadar.status';
 const TITLE_VAR = '${claudeRadarStatus}';
 // 'prompt' is 'working' with a reset clock (see check()), not a state of its own.
@@ -158,15 +161,30 @@ function detectBundleId() {
 // For terminal-notifier's -execute string (runs in a shell)
 const shq = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-function markerFile() {
+// Realpath-resolved path of the first workspace folder. Everything
+// project-scoped keys off this: the marker file, the transcript folder, and
+// the cwd match against running sessions. Symlink variants of the same folder
+// therefore resolve alike. Unresolvable (just deleted) falls back to the raw
+// path, so a marker still has a stable name.
+function projectRoot() {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) return undefined;
-  let p = folders[0].uri.fsPath;
+  const p = folders[0].uri.fsPath;
   try {
-    p = fs.realpathSync(p);
+    return fs.realpathSync(p);
   } catch {
-    /* folder unresolvable (e.g. just deleted): hash it unresolved */
+    return p;
   }
+}
+
+// How Claude Code names its transcript folders: every non-alphanumeric UTF-16
+// unit becomes '-' (verified against real transcript dirs, including __ and
+// emoji paths).
+const slugFor = (p) => p.replace(/[^a-zA-Z0-9]/g, '-');
+
+function markerFile() {
+  const p = projectRoot();
+  if (!p) return undefined;
   const hash = crypto.createHash('sha256').update(p).digest('hex').slice(0, 16);
   return path.join(STATUS_DIR, hash);
 }
@@ -189,19 +207,9 @@ const AGENT_ACTIVE_MS = 120000;
 const AGENT_POLL_MS = 10000;
 let agentCount = 0;
 
-// <slug> = the realpath-resolved project path with every non-alphanumeric
-// UTF-16 unit replaced by '-', exactly how Claude Code names these folders
-// (verified against real transcript dirs, including __ and emoji paths).
 function agentTranscriptRoot() {
-  const folders = vscode.workspace.workspaceFolders;
-  if (!folders || folders.length === 0) return undefined;
-  let p = folders[0].uri.fsPath;
-  try {
-    p = fs.realpathSync(p);
-  } catch {
-    /* folder unresolvable: slug the unresolved path, like markerFile() */
-  }
-  return path.join(PROJECTS_DIR, p.replace(/[^a-zA-Z0-9]/g, '-'));
+  const p = projectRoot();
+  return p ? path.join(PROJECTS_DIR, slugFor(p)) : undefined;
 }
 
 function countActiveAgents() {
@@ -255,6 +263,147 @@ function updateAgentCount() {
   return true;
 }
 
+// Live sessions and their transcripts. Two things Radar cannot learn from
+// hooks come from here, both read-only and both only while a marker shows:
+//
+// 1. Liveness. A hook fires only while Claude runs. Dies the process mid-turn
+//    (crash, closed terminal, window reload), no Stop ever arrives and the
+//    marker hangs forever, running clock included. A pid that no longer
+//    answers proves nobody is working in this project.
+// 2. The transcript. sessionId names the JSONL under PROJECTS_DIR, which
+//    records two events no hook reports: the Esc interrupt (Claude Code fires
+//    nothing at all for it) and a failed tool call.
+
+// Sessions of this project whose process still answers. undefined means "can
+// not tell": no session files at all, i.e. an older Claude Code without the
+// feature, or simply nothing running anywhere. Callers must then leave the
+// marker alone - clearing on an absent feature would wipe every marker. An
+// empty array is a real answer: sessions exist, none of them here.
+function liveSessionsHere(root) {
+  let names;
+  try {
+    names = fs.readdirSync(SESSIONS_DIR);
+  } catch {
+    return undefined; // no sessions dir
+  }
+  const here = [];
+  let sawAny = false;
+  for (const name of names) {
+    const m = /^(\d+)\.json$/.exec(name);
+    if (!m) continue;
+    sawAny = true;
+    try {
+      process.kill(Number(m[1]), 0); // signal 0 only probes, it never signals
+    } catch (e) {
+      // EPERM means alive but owned by someone else; anything else is gone.
+      // A recycled pid can make a dead session look alive, which only ever
+      // leaves a marker standing - the harmless direction.
+      if (e.code !== 'EPERM') continue;
+    }
+    let d;
+    try {
+      d = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, name), 'utf8'));
+    } catch {
+      continue; // half-written or not JSON
+    }
+    if (typeof d.sessionId !== 'string' || typeof d.cwd !== 'string') continue;
+    // Resolve the session's cwd the same way projectRoot() resolves ours: a
+    // project opened through a symlink otherwise never matches, and a session
+    // wrongly counted as gone takes a live marker with it.
+    let cwd = d.cwd;
+    try {
+      cwd = fs.realpathSync(cwd);
+    } catch {
+      /* directory gone; compare what the session reported */
+    }
+    // Prefix, not equality: Claude may have been started in a subfolder while
+    // the marker hangs on the project root (the hook uses CLAUDE_PROJECT_DIR).
+    // Deliberately no filter on d.entrypoint, or sessions started in a plain
+    // terminal would count as dead and lose their marker.
+    if (cwd === root || cwd.startsWith(root + path.sep)) here.push(d);
+  }
+  return sawAny ? here : undefined;
+}
+
+// Bytes already read per transcript. A file seen for the first time is only
+// measured, never scanned: its history holds interrupts and errors from
+// earlier turns that must not fire now.
+const tailOffsets = new Map();
+// Set when the transcript shows the turn was interrupted with Esc.
+let sawInterrupt = false;
+// True while the most recent tool call failed. Measured over 1464 real turns:
+// "the last tool_result was an error" marks 2 %, while "any error somewhere in
+// the turn" marks 6 % - mostly failures Claude recovered from in the same
+// turn, which is exactly what Radar must not report.
+let lastToolFailed = false;
+
+function scanTranscriptLine(line) {
+  // Cheap pre-filter. tool_result also has to pass when it succeeded, that is
+  // what resets lastToolFailed.
+  if (!line.includes('tool_result') && !line.includes('Request interrupted')) return;
+  let d;
+  try {
+    d = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (d.type !== 'user') return;
+  const content = d.message && d.message.content;
+  if (!Array.isArray(content)) return; // a typed prompt is a plain string
+  for (const b of content) {
+    if (!b || typeof b !== 'object') continue;
+    // Checking the structure matters: the same words show up inside tool
+    // output whenever anyone greps for them, so a plain substring scan would
+    // fire on that. Verified against the real transcripts: the interrupt is
+    // always its own text block on a user line.
+    if (b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('[Request interrupted by user')) {
+      sawInterrupt = true;
+    }
+    if (b.type === 'tool_result') lastToolFailed = b.is_error === true;
+  }
+}
+
+// Read what is new in this project's transcripts and fold it into the two
+// flags above. Only whole lines are consumed: Claude may be mid-write, and
+// advancing past a partial line would drop it for good.
+function scanTranscripts(sessions) {
+  for (const s of sessions) {
+    const file = path.join(PROJECTS_DIR, slugFor(s.cwd), s.sessionId + '.jsonl');
+    let size;
+    try {
+      size = fs.statSync(file).size;
+    } catch {
+      continue; // no transcript yet
+    }
+    const seen = tailOffsets.get(file);
+    if (seen === undefined || size < seen) {
+      tailOffsets.set(file, size); // first sight, or replaced: baseline only
+      continue;
+    }
+    if (size === seen) continue;
+    let buf;
+    try {
+      const fd = fs.openSync(file, 'r');
+      try {
+        buf = Buffer.allocUnsafe(size - seen);
+        fs.readSync(fd, buf, 0, buf.length, seen);
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      continue;
+    }
+    // Cut on the last newline in the raw bytes, so a chunk never starts in the
+    // middle of a multi-byte character.
+    const nl = buf.lastIndexOf(0x0a);
+    if (nl === -1) continue; // no complete line yet, keep the offset
+    tailOffsets.set(file, seen + nl + 1);
+    for (const line of buf.subarray(0, nl).toString('utf8').split('\n')) {
+      if (line) scanTranscriptLine(line);
+    }
+  }
+}
+
 // '' below one minute, then '14m', from an hour on '1h05'.
 function elapsedLabel(since) {
   const m = Math.floor((Date.now() - since) / 60000);
@@ -263,8 +412,9 @@ function elapsedLabel(since) {
   return Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0');
 }
 
-// label: 'working' | 'waiting' | 'stop' sets the matching marker,
-// null removes it.
+// label: 'working' | 'waiting' | 'stop' | 'error' sets the matching marker,
+// null removes it. 'error' is the only one no hook writes: it is derived in
+// check() from the transcript when a turn ended on a failed tool call.
 function setMarker(label) {
   let marker = '';
   if (label) {
@@ -272,6 +422,7 @@ function setMarker(label) {
     const symbol = (
       label === 'waiting' ? cfg.get('markerWaiting', '⚠️')
       : label === 'working' ? cfg.get('markerWorking', '💬')
+      : label === 'error' ? cfg.get('markerError', '🔴')
       : cfg.get('markerDone', '🟢')
     ).trim();
     let time = '';
@@ -314,9 +465,20 @@ function notify(label, ranFor = '') {
   const folder = (vscode.workspace.workspaceFolders || [])[0];
   const projectName = folder ? folder.name : 'VS Code';
   const projectPath = folder ? folder.uri.fsPath : '';
+  const failed = label === 'error';
   const done = label === 'stop';
-  const subtitle = done ? (ranFor ? 'Done after ' + ranFor : 'Done') : 'Needs you';
-  const sound = done ? cfg.get('soundDone', 'Glass') : cfg.get('soundWaiting', 'Basso');
+  const subtitle = failed
+    ? ranFor ? 'Failed after ' + ranFor : 'Failed'
+    : done
+      ? ranFor ? 'Done after ' + ranFor : 'Done'
+      : 'Needs you';
+  // A failed turn wants you more than a finished one does, so it borrows the
+  // attention sound rather than the friendly one.
+  const sound = failed
+    ? cfg.get('soundError', 'Basso')
+    : done
+      ? cfg.get('soundDone', 'Glass')
+      : cfg.get('soundWaiting', 'Basso');
 
   if (notifierPath) {
     // Project name prominent as the title, status below. The Radar icon
@@ -672,6 +834,38 @@ async function activate(context) {
   let peekTimer; // hides the briefly shown marker in the active window again
   context.subscriptions.push({ dispose: () => clearTimeout(peekTimer) });
 
+  // Drop the marker and everything derived from it. Used by the Clear command
+  // and by the sweep below, which reaches the same conclusion on its own.
+  const clearState = () => {
+    currentLabel = null;
+    workingSince = null;
+    agentCount = 0;
+    lastToolFailed = false;
+    sawInterrupt = false;
+    return setMarker(null);
+  };
+
+  // One read-only pass while a marker is on display: is anyone still working
+  // in this project, and did the transcript record an Esc interrupt? Both end
+  // the same way, with a marker that was lying removed. Returns true when it
+  // cleared, so the caller can stop.
+  const sweep = () => {
+    const root = projectRoot();
+    if (!root) return false;
+    const sessions = liveSessionsHere(root);
+    if (sessions === undefined) return false; // can't tell: leave it alone
+    if (sessions.length === 0) {
+      clearState();
+      return true;
+    }
+    scanTranscripts(sessions);
+    if (sawInterrupt) {
+      clearState(); // resets sawInterrupt
+      return true;
+    }
+    return false;
+  };
+
   // Refresh the elapsed time once a minute while 'working' is shown; a no-op
   // with the setting off (setMarker then rebuilds the same string).
   const timeTick = setInterval(() => {
@@ -679,12 +873,16 @@ async function activate(context) {
   }, 60000);
   context.subscriptions.push({ dispose: () => clearInterval(timeTick) });
 
-  // Poll the agent count only while 'working' is on display; any other state
-  // skips the scan entirely, so an idle window costs nothing.
-  const agentTick = setInterval(() => {
+  // The only recurring scan, and it runs solely while a marker is on display:
+  // with an empty title (the normal state) this returns immediately, so an
+  // idle window still costs nothing. The sweep goes first - once the marker is
+  // gone there is no agent count left to refresh.
+  const watchTick = setInterval(() => {
+    if (!currentLabel) return;
+    if (sweep()) return;
     if (currentLabel === 'working' && updateAgentCount()) setMarker('working');
   }, AGENT_POLL_MS);
-  context.subscriptions.push({ dispose: () => clearInterval(agentTick) });
+  context.subscriptions.push({ dispose: () => clearInterval(watchTick) });
 
   const file = markerFile();
   if (file) {
@@ -708,10 +906,20 @@ async function activate(context) {
         }
       }
       if (!LABELS.includes(label)) label = 'stop'; // unexpected content -> treat as done
+      // The Stop hook can't know whether the turn ended on a failed tool call,
+      // so the transcript decides between done and failed. Scanning here and
+      // not just on the tick matters: Stop lands milliseconds after the last
+      // tool result, long before the next tick would have seen it.
+      if (label === 'stop') {
+        const root = projectRoot();
+        const sessions = root ? liveSessionsHere(root) : undefined;
+        if (sessions && sessions.length > 0) scanTranscripts(sessions);
+        if (lastToolFailed) label = 'error';
+      }
       // How long the run took, read before the state below clears it: the
       // done banner reports it, which is the first thing you want to know
       // when one pops up after you've been away. Empty below a minute.
-      const ranFor = label === 'stop' && workingSince ? elapsedLabel(workingSince) : '';
+      const ranFor = (label === 'stop' || label === 'error') && workingSince ? elapsedLabel(workingSince) : '';
       // The elapsed time counts from your last prompt: 'prompt' (re)starts
       // the clock unconditionally, the frequent PostToolUse 'working'
       // repeats only start it when it isn't running, and every other event
@@ -721,6 +929,10 @@ async function activate(context) {
       if (label === 'prompt') {
         workingSince = Date.now();
         label = 'working';
+        // A new prompt starts a clean turn: whatever failed in the previous
+        // one must not colour this one's ending red.
+        lastToolFailed = false;
+        sawInterrupt = false;
       } else if (label === 'working') {
         if (!workingSince) workingSince = Date.now();
       } else {
@@ -805,13 +1017,11 @@ async function activate(context) {
       }
     }),
     vscode.commands.registerCommand('claudeRadar.clear', () => {
-      // Drop the state too, not just the marker: the one real use case is an
-      // Esc-interrupted turn (no hook fires for it), and with 'working' left
-      // standing the next timeTick or focus change would put 💬 right back.
-      currentLabel = null;
-      workingSince = null;
-      agentCount = 0;
-      return setMarker(null);
+      // Drop the state too, not just the marker, or the next tick or focus
+      // change would put 💬 right back. Since the sweep clears an interrupted
+      // or dead session by itself, this is now the manual override rather than
+      // the only way out.
+      return clearState();
     }),
     vscode.commands.registerCommand('claudeRadar.installHooks', () => installHooks()),
     vscode.commands.registerCommand('claudeRadar.removeHooks', removeHooks),
