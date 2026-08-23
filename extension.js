@@ -331,6 +331,11 @@ function liveSessionsHere(root) {
 const tailOffsets = new Map();
 // Set when the transcript shows the turn was interrupted with Esc.
 let sawInterrupt = false;
+// The turn's closing words. A turn that ends by asking something needs you
+// just as much as a permission prompt does, but Claude Code reports it as a
+// plain Stop - so the marker used to say "done" and the question sat there
+// unanswered. Measured over 1579 real turn endings, 4 % close with a question.
+let lastAssistantText = '';
 // True while the most recent tool call failed. Measured over 1464 real turns:
 // "the last tool_result was an error" marks 2 %, while "any error somewhere in
 // the turn" marks 6 % - mostly failures Claude recovered from in the same
@@ -340,16 +345,33 @@ let lastToolFailed = false;
 function scanTranscriptLine(line) {
   // Cheap pre-filter. tool_result also has to pass when it succeeded, that is
   // what resets lastToolFailed.
-  if (!line.includes('tool_result') && !line.includes('Request interrupted')) return;
+  if (
+    !line.includes('tool_result') &&
+    !line.includes('Request interrupted') &&
+    !line.includes('"assistant"')
+  ) {
+    return;
+  }
   let d;
   try {
     d = JSON.parse(line);
   } catch {
     return;
   }
-  if (d.type !== 'user') return;
   const content = d.message && d.message.content;
   if (!Array.isArray(content)) return; // a typed prompt is a plain string
+
+  if (d.type === 'assistant') {
+    // Claude splits one message across several lines, one per content block,
+    // so the last text block seen is the turn's closing text.
+    for (const b of content) {
+      if (b && b.type === 'text' && typeof b.text === 'string' && b.text.trim() !== '') {
+        lastAssistantText = b.text;
+      }
+    }
+    return;
+  }
+  if (d.type !== 'user') return;
   for (const b of content) {
     if (!b || typeof b !== 'object') continue;
     // Checking the structure matters: the same words show up inside tool
@@ -404,6 +426,18 @@ function scanTranscripts(sessions) {
   }
 }
 
+// Does the turn close on a question? The last non-empty line decides: Claude
+// often explains at length and then asks in the final line, and anything
+// looser (a '?' anywhere) would fire on rhetorical questions mid-text.
+function endsWithQuestion(text) {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i].trim();
+    if (l !== '') return l.endsWith('?');
+  }
+  return false;
+}
+
 // '' below one minute, then '14m', from an hour on '1h05'.
 function elapsedLabel(since) {
   const m = Math.floor((Date.now() - since) / 60000);
@@ -456,10 +490,15 @@ function isMuted() {
 
 // ranFor: elapsed label of the finished run ('14m'), empty below a minute
 // or when the state was never 'working'.
-function notify(label, ranFor = '') {
+function notify(label, ranFor = '', ranMs = 0) {
   const cfg = vscode.workspace.getConfiguration('claudeRadar');
   if (!cfg.get('banner', true)) return;
   if (isMuted()) return;
+  // Short turns can ping more than they help. Only the done banner is gated:
+  // a question, a permission, or a failure wants you no matter how fast it
+  // arrived. ranMs of 0 means the run time is unknown, so nothing is skipped.
+  const minDone = Number(cfg.get('minDoneSeconds', 0)) * 1000;
+  if (label === 'stop' && minDone > 0 && ranMs > 0 && ranMs < minDone) return;
   detectBinaries(); // lazy: also picks up a terminal-notifier installed after startup
 
   const folder = (vscode.workspace.workspaceFolders || [])[0];
@@ -842,6 +881,7 @@ async function activate(context) {
     agentCount = 0;
     lastToolFailed = false;
     sawInterrupt = false;
+    lastAssistantText = '';
     return setMarker(null);
   };
 
@@ -914,12 +954,22 @@ async function activate(context) {
         const root = projectRoot();
         const sessions = root ? liveSessionsHere(root) : undefined;
         if (sessions && sessions.length > 0) scanTranscripts(sessions);
-        if (lastToolFailed) label = 'error';
+        // A question wins over a failure: both send you to the window, but
+        // "answer me" is the more accurate instruction than "look at this".
+        if (
+          vscode.workspace.getConfiguration('claudeRadar').get('detectQuestions', true) &&
+          endsWithQuestion(lastAssistantText)
+        ) {
+          label = 'waiting';
+        } else if (lastToolFailed) {
+          label = 'error';
+        }
       }
       // How long the run took, read before the state below clears it: the
       // done banner reports it, which is the first thing you want to know
       // when one pops up after you've been away. Empty below a minute.
       const ranFor = (label === 'stop' || label === 'error') && workingSince ? elapsedLabel(workingSince) : '';
+      const ranMs = workingSince ? Date.now() - workingSince : 0;
       // The elapsed time counts from your last prompt: 'prompt' (re)starts
       // the clock unconditionally, the frequent PostToolUse 'working'
       // repeats only start it when it isn't running, and every other event
@@ -933,6 +983,7 @@ async function activate(context) {
         // one must not colour this one's ending red.
         lastToolFailed = false;
         sawInterrupt = false;
+        lastAssistantText = '';
       } else if (label === 'working') {
         if (!workingSince) workingSince = Date.now();
       } else {
@@ -965,7 +1016,7 @@ async function activate(context) {
         return;
       }
       setMarker(label);
-      notify(label, ranFor);
+      notify(label, ranFor, ranMs);
     };
     const ownName = path.basename(file);
     let debounce;

@@ -15,7 +15,7 @@
 
 ## Four features, one glance
 
-- **Live status in every window title.** 💬 working, ⚠️ needs you, 🟢 done, 🔴 ended on a failed tool call. Every project, one look.
+- **Live status in every window title.** 💬 working, ⚠️ needs you, 🟢 done, 🔴 ended on a failed tool call. Every project, one look. A question Claude typed counts as ⚠️ too, so it doesn't sit unanswered behind a green marker.
 - **Live agent count.** Claude fans out into subagents for a big review or a workflow? The title counts them while they run: `💬 14m 🤖8`.
 - **Markers that clean up after themselves.** Interrupted with `Esc`, Claude quit, terminal closed? The marker goes, instead of claiming work that stopped ten minutes ago.
 - **macOS banners and sounds.** A background window pings you when it needs you or finishes, one click jumps right in. The window you're looking at stays quiet.
@@ -50,7 +50,7 @@ Six Claude hooks drop a file in `~/.claude/tab-status/`, named `sha256(project p
 - `Notification` / `PermissionRequest` → `waiting`
 - `PreToolUse` + `AskUserQuestion` → `waiting` (a question needs you too; its own hook, since AskUserQuestion fires neither Stop nor Notification)
 - `PostToolUse` → `working` (every completed tool call flips back to working, so an answered question or a granted permission doesn't leave the title empty while Claude keeps going)
-- `Stop` → `stop` (done, or 🔴 when the turn's last tool call failed), unless background work is still running, then `working` stays. Subagents, workflows, and monitors count as work (they finish and wake the session); background shell tasks don't, since a dev server Claude started would otherwise hold the working marker forever. Want shell tasks to count? Turn on `claudeRadar.shellTasksKeepWorking`.
+- `Stop` → `stop` (done, or ⚠️ when the turn ends by asking you something, or 🔴 when its last tool call failed), unless background work is still running, then `working` stays. Subagents, workflows, and monitors count as work (they finish and wake the session); background shell tasks don't, since a dev server Claude started would otherwise hold the working marker forever. Want shell tasks to count? Turn on `claudeRadar.shellTasksKeepWorking`.
 
 Each window watches only its own file and shows the marker from **state + focus**:
 
@@ -71,6 +71,7 @@ Stale files (sessions with no matching window) are cleaned up after 24 h.
 - Interrupting Claude with `Esc` still fires no hook, so the marker clears on the next sweep (within 10 s) rather than instantly.
 - Marker verification needs `~/.claude/sessions/`, which older Claude Code versions don't write. Without it Radar leaves every marker alone, exactly as before.
 - 🔴 reports a failed *tool call*, not a failed task. Claude explaining that something can't be done ends green.
+- Question detection reads the last non-empty line of Claude's closing text. A question phrased mid-paragraph, or one without a question mark, ends green. Measured across 1579 real turn endings, 4 % close on a question.
 - The agent count reads transcript activity: an agent that goes silent for over two minutes (say, inside one long build command) drops out of the count until it writes again. Agents running in Anthropic's cloud leave no local transcripts and aren't counted.
 - Multi-root workspaces: the first folder wins.
 - Two events at once: the later one wins.
@@ -87,7 +88,9 @@ Give just the symbol, the space is added for you. Empty means no marker for that
 | `claudeRadar.markerWaiting` | `⚠️` | when Claude needs you |
 | `claudeRadar.markerDone` | `🟢` | when Claude is done |
 | `claudeRadar.markerError` | `🔴` | when the turn ended on a failed tool call |
+| `claudeRadar.detectQuestions` | `true` | a turn ending in a question counts as ⚠️, not 🟢 |
 | `claudeRadar.banner` | `true` | macOS banner on/off |
+| `claudeRadar.minDoneSeconds` | `0` | only banner "done" when the turn ran this long (⚠️ and 🔴 always notify) |
 | `claudeRadar.soundWaiting` | `Basso` | sound when needs you (empty = silent) |
 | `claudeRadar.soundDone` | `Glass` | sound when done (empty = silent) |
 | `claudeRadar.soundError` | `Basso` | sound when a turn ended on a failed tool call |
