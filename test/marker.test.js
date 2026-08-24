@@ -124,6 +124,11 @@ const appendAssistant = (text) =>
     transcript,
     JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } }) + '\n'
   );
+const appendApiError = (text) =>
+  fs.appendFileSync(
+    transcript,
+    JSON.stringify({ type: 'assistant', isApiErrorMessage: true, message: { role: 'assistant', content: [{ type: 'text', text }] } }) + '\n'
+  );
 const appendResult = (isError) =>
   fs.appendFileSync(transcript, userLine([{ type: 'tool_result', tool_use_id: 't', content: 'x', ...(isError ? { is_error: true } : {}) }]));
 
@@ -372,4 +377,58 @@ test('a failed turn says Failed in the banner', async () => {
   await hook('stop');
   assert.match(title, /🔴/);
   assert.match(bannerText(), /Failed/);
+});
+
+// --- a turn that died on Claude's side --------------------------------------
+
+test('an API error raises the error marker and names the cause', async () => {
+  startSession();
+  await hook('prompt');
+  assert.match(title, /💬/);
+
+  // No hook fires for this and the process stays alive, so the sweep is the
+  // only thing that can notice.
+  appendApiError("You've hit your monthly spend limit · raise it at claude.ai/settings/usage");
+  banners.length = 0;
+  sweepTick();
+  assert.match(title, /🔴/, 'no more 💬 counting minutes nobody is working');
+  assert.match(bannerText(), /monthly spend limit/, 'the banner says why, so you need not switch');
+});
+
+test('the API error is reported once, not on every tick', () => {
+  banners.length = 0;
+  sweepTick();
+  sweepTick();
+  assert.equal(banners.length, 0, 'no repeat banner while the marker stands');
+});
+
+test('retrying the prompt starts a clean turn', async () => {
+  startSession();
+  await hook('prompt');
+  appendApiError('API Error: 529 Overloaded. This is a server-side issue.');
+  sweepTick();
+  assert.match(title, /🔴/);
+
+  await hook('prompt'); // the user simply sends it again
+  assert.match(title, /💬/, 'working again, fresh clock');
+  banners.length = 0;
+  sweepTick();
+  assert.match(title, /💬/, 'the previous error must not fire a second time');
+});
+
+test('in the focused window the API error peeks instead of ringing', async () => {
+  startSession();
+  await hook('prompt');
+  focused = true;
+  try {
+    appendApiError('API Error: 529 Overloaded.');
+    banners.length = 0;
+    sweepTick();
+    assert.match(title, /🔴/, 'shown once');
+    assert.equal(banners.length, 0, 'never a banner in the window you are looking at');
+    await sleep(1200);
+    assert.equal(title, '', 'the peek expires');
+  } finally {
+    focused = false;
+  }
 });

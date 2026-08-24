@@ -122,7 +122,7 @@
         "claudeRadar.markerError": {
           "type": "string",
           "default": "🔴",
-          "description": "Shown instead of the done marker when the turn ended on a failed tool call. Just the emoji; empty falls back to no marker."
+          "description": "Shown instead of the done marker when the turn failed: its last tool call failed, or Claude's side died on it (spend limit, overload, expired session). Just the emoji; empty falls back to no marker."
         },
         "claudeRadar.detectQuestions": {
           "type": "boolean",
@@ -153,7 +153,7 @@
         "claudeRadar.soundError": {
           "type": "string",
           "default": "Basso",
-          "description": "Sound when a turn ended on a failed tool call. Empty for silent."
+          "description": "Sound when a turn failed. Empty for silent."
         },
         "claudeRadar.shellTasksKeepWorking": {
           "type": "boolean",

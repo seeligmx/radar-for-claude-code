@@ -31,7 +31,8 @@ fs.writeFileSync(
   COPY,
   fs.readFileSync(SRC, 'utf8') +
     `\nmodule.exports.__test = {
-       liveSessionsHere, scanTranscriptLine, scanTranscripts, slugFor, tailOffsets,
+       liveSessionsHere, scanTranscriptLine, scanTranscripts, slugFor, tailOffsets, shortReason,
+       getApiError: () => apiErrorReason, setApiError: (v) => { apiErrorReason = v; },
        getInterrupt: () => sawInterrupt, setInterrupt: (v) => { sawInterrupt = v; },
        getFailed: () => lastToolFailed, setFailed: (v) => { lastToolFailed = v; },
      };\n`
@@ -46,6 +47,9 @@ const {
   scanTranscripts,
   slugFor,
   tailOffsets,
+  shortReason,
+  getApiError,
+  setApiError,
   getInterrupt,
   setInterrupt,
   getFailed,
@@ -275,3 +279,55 @@ test('a missing transcript is skipped silently', () => {
 });
 
 process.on('exit', () => fs.rmSync(HOME, { recursive: true, force: true }));
+
+// --- API errors ------------------------------------------------------------
+
+// The five wordings actually seen in the transcripts, with what a banner
+// should say about them.
+const API_ERRORS = [
+  ["You've hit your monthly spend limit · raise it at claude.ai/settings/usage", "You've hit your monthly spend limit"],
+  ['API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment.', '529 Overloaded'],
+  ['Failed to authenticate: OAuth session expired and could not be refreshed', 'Failed to authenticate: OAuth session expired an…'],
+  ['API Error: Connection lost mid-response. The response above may be incomplete.', 'Connection lost mid-response'],
+  ['API Error: Server error mid-response. The response above may be incomplete.', 'Server error mid-response'],
+];
+
+test('every real API error wording shortens to something readable', () => {
+  for (const [raw, expected] of API_ERRORS) {
+    assert.equal(shortReason(raw), expected, raw.slice(0, 40));
+    assert.ok(shortReason(raw).length <= 49, 'fits a banner subtitle');
+  }
+});
+
+test('an empty or unknown error message still yields a reason', () => {
+  assert.equal(shortReason(''), 'API error');
+  assert.equal(shortReason('API Error: '), 'API error');
+  assert.equal(shortReason('Something new nobody has seen'), 'Something new nobody has seen');
+});
+
+test('a flagged error line is picked up, an ordinary answer is not', () => {
+  const flagged = (text) =>
+    JSON.stringify({ type: 'assistant', isApiErrorMessage: true, message: { role: 'assistant', content: [{ type: 'text', text }] } });
+
+  setApiError('');
+  scanTranscriptLine(flagged('API Error: 529 Overloaded. Try again.'));
+  assert.equal(getApiError(), '529 Overloaded');
+
+  setApiError('');
+  scanTranscriptLine(
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'I hit an API Error: 529 earlier.' }] } })
+  );
+  assert.equal(getApiError(), '', 'talking about an error is not having one');
+});
+
+test('an error message is not mistaken for the turn\'s closing words', () => {
+  setInterrupt(false);
+  scanTranscriptLine(
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Soll ich das committen?' }] } })
+  );
+  scanTranscriptLine(
+    JSON.stringify({ type: 'assistant', isApiErrorMessage: true, message: { role: 'assistant', content: [{ type: 'text', text: 'API Error: 529 Overloaded.' }] } })
+  );
+  // The question stays the closing text; the error is tracked separately.
+  assert.equal(getApiError(), '529 Overloaded');
+});

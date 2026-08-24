@@ -336,6 +336,21 @@ let sawInterrupt = false;
 // plain Stop - so the marker used to say "done" and the question sat there
 // unanswered. Measured over 7528 real turn endings, 3 % close with a question.
 let lastAssistantText = '';
+// Why the turn died, when it died on Claude's side. These end a turn without
+// any hook firing AND without the process exiting, so neither the Stop hook nor
+// the liveness check notices: the marker would keep counting minutes in which
+// nothing can possibly happen. Seen in the wild: spend limit reached, 529
+// Overloaded, expired OAuth session, connection or server lost mid-response.
+let apiErrorReason = '';
+
+// Squeeze an API error message into a banner subtitle. Deliberately generic:
+// the wordings change between Claude Code releases, so this cuts at the first
+// sentence boundary instead of matching texts we happen to know today.
+function shortReason(text) {
+  const s = text.replace(/^API Error:\s*/, '').split(/[.·\n]/)[0].trim();
+  if (s === '') return 'API error';
+  return s.length > 48 ? s.slice(0, 48).trimEnd() + '…' : s;
+}
 // True while the most recent tool call failed. Measured over 1464 real turns:
 // "the last tool_result was an error" marks 2 %, while "any error somewhere in
 // the turn" marks 6 % - mostly failures Claude recovered from in the same
@@ -362,6 +377,14 @@ function scanTranscriptLine(line) {
   if (!Array.isArray(content)) return; // a typed prompt is a plain string
 
   if (d.type === 'assistant') {
+    // Claude Code flags its own error messages, so no text matching is needed.
+    // They are not Claude's closing words either, hence the early return.
+    if (d.isApiErrorMessage === true) {
+      for (const b of content) {
+        if (b && b.type === 'text' && typeof b.text === 'string') apiErrorReason = shortReason(b.text);
+      }
+      return;
+    }
     // Claude splits one message across several lines, one per content block,
     // so the last text block seen is the turn's closing text.
     for (const b of content) {
@@ -490,7 +513,7 @@ function isMuted() {
 
 // ranFor: elapsed label of the finished run ('14m'), empty below a minute
 // or when the state was never 'working'.
-function notify(label, ranFor = '', ranMs = 0) {
+function notify(label, ranFor = '', ranMs = 0, reason = '') {
   const cfg = vscode.workspace.getConfiguration('claudeRadar');
   if (!cfg.get('banner', true)) return;
   if (isMuted()) return;
@@ -507,7 +530,7 @@ function notify(label, ranFor = '', ranMs = 0) {
   const failed = label === 'error';
   const done = label === 'stop';
   const subtitle = failed
-    ? ranFor ? 'Failed after ' + ranFor : 'Failed'
+    ? reason !== '' ? reason : ranFor ? 'Failed after ' + ranFor : 'Failed'
     : done
       ? ranFor ? 'Done after ' + ranFor : 'Done'
       : 'Needs you';
@@ -882,7 +905,28 @@ async function activate(context) {
     lastToolFailed = false;
     sawInterrupt = false;
     lastAssistantText = '';
+    apiErrorReason = '';
     return setMarker(null);
+  };
+
+  // waiting/stop/error are attention events. In the focused window, "peek":
+  // show the marker ~1 s, then hide it, without banner/sound. The user sees it
+  // once, then the tab is quiet again. Unfocused: persistent marker + banner.
+  // Shared by the hook path and the sweep, which raises the same kind of event
+  // when Claude's side of a turn died.
+  const showAttention = (label, ranFor = '', ranMs = 0, reason = '') => {
+    clearTimeout(peekTimer); // a running peek must never outlive a new event
+    currentLabel = label;
+    if (vscode.window.state.focused) {
+      currentLabel = null; // counts as seen
+      setMarker(label);
+      peekTimer = setTimeout(() => {
+        if (vscode.window.state.focused) setMarker(null);
+      }, PEEK_MS);
+      return;
+    }
+    setMarker(label);
+    notify(label, ranFor, ranMs, reason);
   };
 
   // One read-only pass while a marker is on display: is anyone still working
@@ -901,6 +945,19 @@ async function activate(context) {
     scanTranscripts(sessions);
     if (sawInterrupt) {
       clearState(); // resets sawInterrupt
+      return true;
+    }
+    if (apiErrorReason !== '') {
+      // The turn died on Claude's side: no hook fires and the process lives on,
+      // so this is the only place that can tell you. Reported once, not on
+      // every tick - the next prompt is what starts a new turn.
+      const reason = apiErrorReason;
+      apiErrorReason = '';
+      const ranFor = workingSince ? elapsedLabel(workingSince) : '';
+      const ranMs = workingSince ? Date.now() - workingSince : 0;
+      workingSince = null;
+      agentCount = 0;
+      showAttention('error', ranFor, ranMs, reason);
       return true;
     }
     return false;
@@ -984,18 +1041,19 @@ async function activate(context) {
         lastToolFailed = false;
         sawInterrupt = false;
         lastAssistantText = '';
+        apiErrorReason = '';
       } else if (label === 'working') {
         if (!workingSince) workingSince = Date.now();
       } else {
         workingSince = null;
       }
       const wasWorking = currentLabel === 'working';
-      currentLabel = label;
-      clearTimeout(peekTimer); // a running peek must never overwrite a new event
       // 'working' is a lasting state and always visible (even in the active
       // window), never with banner/sound -> no flicker on focus changes
       // while Claude is working.
       if (label === 'working') {
+        currentLabel = 'working';
+        clearTimeout(peekTimer); // a running peek must never overwrite a new event
         // Entering 'working' counts agents right away instead of waiting up
         // to a poll tick; the frequent PostToolUse repeats don't re-scan,
         // check() has to stay cheap.
@@ -1003,20 +1061,7 @@ async function activate(context) {
         setMarker('working');
         return;
       }
-      // waiting/stop are attention events. In the focused window, "peek":
-      // show the marker ~1 s, then hide it, without banner/sound. The user
-      // sees "needs you/done" once, then the tab is quiet again.
-      // Unfocused: persistent marker + banner.
-      if (vscode.window.state.focused) {
-        currentLabel = null; // counts as seen
-        setMarker(label);
-        peekTimer = setTimeout(() => {
-          if (vscode.window.state.focused) setMarker(null);
-        }, PEEK_MS);
-        return;
-      }
-      setMarker(label);
-      notify(label, ranFor, ranMs);
+      showAttention(label, ranFor, ranMs);
     };
     const ownName = path.basename(file);
     let debounce;
