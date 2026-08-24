@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.1 - 2026-08-23
+## 1.1.1 - 2026-08-24
 
 - **Feature:** A turn that ends by asking you something now shows ⚠️ instead of 🟢. Claude Code reports a typed question as a plain turn end, so until now the question sat there behind a green "done" marker. Turn it off with `claudeRadar.detectQuestions`.
 - **Feature:** Markers clean up after themselves. Interrupt with `Esc`, quit Claude, close the terminal: instead of a 💬 that keeps counting minutes nobody is working, the marker goes within 10 seconds. Radar cross-checks the sessions Claude Code lists in `~/.claude/sessions/` and reads the tail of the session transcript, which records the `Esc` interrupt that fires no hook.
