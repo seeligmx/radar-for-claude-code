@@ -423,16 +423,3 @@ test('in the focused window the API error peeks instead of ringing', async () =>
     focused = false;
   }
 });
-
-// --- Esc during a tool call ------------------------------------------------
-
-test('Esc during a tool call clears the marker right away', async () => {
-  startSession();
-  await hook('prompt');
-  assert.match(title, /💬/);
-  await hook('interrupt'); // PostToolUseFailure with is_interrupt
-  assert.equal(title, '', 'nothing finished, nothing continues: no marker');
-  assert.equal(banners.length, 0, 'and nothing to ring about');
-  sweepTick();
-  assert.equal(title, '', 'and the sweep has nothing left to do');
-});

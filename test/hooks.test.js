@@ -78,6 +78,7 @@ for (const [name, PATH] of Object.entries(PATHS)) {
       ['PermissionRequest', 'waiting'],
       ['PreToolUse', 'waiting'],
       ['PostToolUse', 'working'],
+      ['PostToolUseFailure', 'working'], // Claude reads the error and carries on
     ];
     for (const [event, label] of fixed) assert.equal(run(event, '{}', PATH), label, event);
   });
@@ -98,12 +99,6 @@ for (const [name, PATH] of Object.entries(PATHS)) {
     } finally {
       fs.unlinkSync(path.join(STATUS, '.shell-keeps-working'));
     }
-  });
-
-  test(`[${name}] a failed tool call keeps working, an aborted one clears`, () => {
-    assert.equal(run('PostToolUseFailure', JSON.stringify({ tool_name: 'Bash', error: 'exit 1' }), PATH), 'working');
-    const aborted = JSON.stringify({ tool_name: 'Bash', error: 'interrupted', is_interrupt: true });
-    assert.equal(run('PostToolUseFailure', aborted, PATH), parser ? 'interrupt' : 'working');
   });
 
   test(`[${name}] a turn that died on Claude's side writes error plus the reason`, () => {

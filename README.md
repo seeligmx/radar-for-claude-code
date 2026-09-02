@@ -50,7 +50,7 @@ Eight Claude hooks drop a file in `~/.claude/tab-status/`, named `sha256(project
 - `UserPromptSubmit` → `prompt` (shows `working`, purely visual, no banner/sound; its own label so a new prompt restarts the elapsed-time clock)
 - `Notification` / `PermissionRequest` → `waiting`
 - `PreToolUse` + `AskUserQuestion` → `waiting` (a question needs you too; its own hook, since AskUserQuestion fires neither Stop nor Notification)
-- `PostToolUse` / `PostToolUseFailure` → `working` (every completed tool call flips back to working, failed ones too, since Claude reads the error and carries on; so an answered question or a granted permission doesn't leave the title empty while Claude keeps going). A call aborted with `Esc` clears the marker instead: nothing finished, nothing continues.
+- `PostToolUse` / `PostToolUseFailure` → `working` (every completed tool call flips back to working, failed ones too, since Claude reads the error and carries on; so an answered question or a granted permission doesn't leave the title empty while Claude keeps going)
 - `Stop` → `stop` (done, or ⚠️ when the turn ends by asking you something, or 🔴 when its last tool call failed), unless background work is still running, then `working` stays. Subagents, workflows, and monitors count as work (they finish and wake the session); background shell tasks don't, since a dev server Claude started would otherwise hold the working marker forever. Want shell tasks to count? Turn on `claudeRadar.shellTasksKeepWorking`.
 - `StopFailure` → `error` (🔴, the turn died on Claude's side: a spend limit, a 529, an expired session, a connection lost mid-response. The banner names the cause, so you know whether to retry or to go fix something.)
 
@@ -64,7 +64,7 @@ While `working` shows, Radar also counts the subagents running in this project: 
 
 While a marker is on display, Radar also verifies it. Claude Code lists every running session in `~/.claude/sessions/<pid>.json` with its working directory; if no live process belongs to this project any more, the marker was lying and goes. The same pass reads the tail of the session transcript, which records two things no hook reports:
 
-- An `Esc` interrupt between two tool calls. The marker goes, deliberately without a "done" marker, since nothing finished. (`Esc` during a tool call does reach a hook and clears right away.)
+- An `Esc` interrupt. The marker goes, deliberately without a "done" marker, since nothing finished.
 - A failed tool call. Only the turn's *last* tool result counts for 🔴, so a failure Claude recovered from in the same turn still ends green. Measured across 1464 real turns, that marks 2 % of them.
 
 Stale files (sessions with no matching window) are cleaned up after 24 h.
@@ -73,7 +73,7 @@ Stale files (sessions with no matching window) are cleaned up after 24 h.
 
 - The marker is text (emoji) in the title, not a native tab badge, macOS doesn't allow those.
 - `Stop` fires after every response. Fine for the marker and banner (idempotent, one banner per project, focused windows skipped).
-- `Esc` between two tool calls fires no hook, so the marker clears on the next sweep (within 10 s) rather than instantly. `Esc` during a tool call does.
+- Interrupting Claude with `Esc` still fires no hook Radar can use, so the marker clears on the next sweep (within 10 s) rather than instantly.
 - Marker verification needs `~/.claude/sessions/`, which older Claude Code versions don't write. Without it Radar leaves every marker alone, exactly as before.
 - 🔴 means the turn failed: either its last tool call failed, or Claude's side died on it. A task Claude explains it can't do ends green, since nothing technically failed.
 - Question detection reads the last non-empty line of Claude's closing text. A question phrased mid-paragraph, or one without a question mark, ends green. Measured across 7528 real turn endings, 3 % close on a question.
