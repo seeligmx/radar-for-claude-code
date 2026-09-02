@@ -60,7 +60,7 @@ Each window watches only its own file and shows the marker from **state + focus*
 - `needs you` / `done` show a persistent marker and banner only when the window's in the background (banner via `terminal-notifier`, a click focuses the right window). In the active window they flash for ~1 s ("peek") and fade.
 - Focusing a window clears an attention marker; `working` stays, since Claude's still going.
 
-While `working` shows, Radar also counts the subagents running in this project: Claude Code keeps one transcript file per agent under `~/.claude/projects/`, and a transcript written to within the last two minutes counts as a running agent (checked every 10 s, read-only). That's the 🤖8 in the title.
+While `working` shows, Radar also counts the subagents running in this project: Claude Code keeps one transcript file per agent under `~/.claude/projects/`, and an agent counts as running until its transcript ends on its final answer (checked every 10 s, read-only). One that has been silent for ten minutes counts as gone, whatever its transcript says. That's the 🤖8 in the title.
 
 While a marker is on display, Radar also verifies it. Claude Code lists every running session in `~/.claude/sessions/<pid>.json` with its working directory; if no live process belongs to this project any more, the marker was lying and goes. The same pass reads the tail of the session transcript, which records two things no hook reports:
 
@@ -77,7 +77,7 @@ Stale files (sessions with no matching window) are cleaned up after 24 h.
 - Marker verification needs `~/.claude/sessions/`, which older Claude Code versions don't write. Without it Radar leaves every marker alone, exactly as before.
 - 🔴 means the turn failed: either its last tool call failed, or Claude's side died on it. A task Claude explains it can't do ends green, since nothing technically failed.
 - Question detection reads the last non-empty line of Claude's closing text. A question phrased mid-paragraph, or one without a question mark, ends green. Measured across 7528 real turn endings, 3 % close on a question.
-- The agent count reads transcript activity: an agent that goes silent for over two minutes (say, inside one long build command) drops out of the count until it writes again. Agents running in Anthropic's cloud leave no local transcripts and aren't counted.
+- The agent count reads the transcripts: an agent killed together with its session leaves no final answer behind and stays in the count for up to ten minutes. Agents running in Anthropic's cloud leave no local transcripts and aren't counted.
 - Multi-root workspaces: the first folder wins.
 - Two events at once: the later one wins.
 

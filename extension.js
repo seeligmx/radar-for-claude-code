@@ -233,15 +233,23 @@ let workingSince = null;
 
 // Live count of running subagents (💬 14m 🤖8). Claude Code keeps one
 // transcript per subagent under ~/.claude/projects/<slug>/<session>/subagents/
-// (workflow agents one level deeper, in workflows/<runId>/). A transcript
-// appended to within AGENT_ACTIVE_MS counts as a running agent: agents write
-// on every message, so longer silence means finished - or stuck in one long
-// tool call, which is why the window is generous rather than tight (the
-// count may briefly dip while an agent sits in a long build). Read-only
-// polling instead of hook events: SubagentStop can be missed (Esc, kill),
-// and a missed event would leave a counter stuck forever; mtimes self-heal.
+// (workflow agents one level deeper, in workflows/<runId>/). The transcript
+// says whether its agent is done: a finished one ends on the final answer (an
+// assistant line with stop_reason end_turn) or, for workflow agents, on the
+// StructuredOutput result (a user line flagged toolEndsTurn). Anything else
+// (a tool_use waiting for its result, a result waiting for the model) is an
+// agent mid-work. Measured over 77 finished transcripts: 73 end on
+// toolEndsTurn, 4 on end_turn, none on anything else, and toolEndsTurn never
+// shows up before the last line. Read-only polling instead of SubagentStop:
+// a hook event can be missed (Esc, kill) and would leave the count stuck.
+// The mtime window is only the fallback for exactly those agents: killed with
+// their session, they leave a mid-work transcript behind that would count
+// forever. It used to be the whole mechanism, and tight (2 min), which made
+// the count dip whenever an agent thought or built for longer: 38 to 61 % of
+// Opus 5 / Fable 5 agents sit silent for over two minutes at least once.
 const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
-const AGENT_ACTIVE_MS = 120000;
+const AGENT_STALE_MS = 10 * 60000;
+const AGENT_TAIL_BYTES = 64 * 1024;
 const AGENT_POLL_MS = 10000;
 let agentCount = 0;
 
@@ -250,10 +258,42 @@ function agentTranscriptRoot() {
   return p ? path.join(PROJECTS_DIR, slugFor(p)) : undefined;
 }
 
+// Does the transcript's last complete line say the agent is done? Reads only
+// the tail. Undecidable cases (a last line longer than the tail, not JSON, an
+// empty file) answer false: the agent then stays in the count until the mtime
+// fallback lets it go.
+function agentFinished(file, size) {
+  if (size === 0) return false;
+  const len = Math.min(size, AGENT_TAIL_BYTES);
+  const buf = Buffer.allocUnsafe(len);
+  const fd = fs.openSync(file, 'r');
+  try {
+    fs.readSync(fd, buf, 0, len, size - len);
+  } finally {
+    fs.closeSync(fd);
+  }
+  // The last complete line: Claude may be mid-write, so a tail without its
+  // newline is skipped, and so are blank lines.
+  let end = buf.lastIndexOf(0x0a);
+  while (end > 0 && buf[end - 1] === 0x0a) end--;
+  if (end <= 0) return false;
+  const start = buf.lastIndexOf(0x0a, end - 1) + 1;
+  if (start === 0 && len < size) return false; // began before the tail: undecidable
+  let d;
+  try {
+    d = JSON.parse(buf.subarray(start, end).toString('utf8'));
+  } catch {
+    return false;
+  }
+  if (!d || typeof d !== 'object') return false;
+  if (d.type === 'user') return d.toolEndsTurn === true;
+  return d.type === 'assistant' && !!d.message && d.message.stop_reason === 'end_turn';
+}
+
 function countActiveAgents() {
   const root = agentTranscriptRoot();
   if (!root) return 0;
-  const cutoff = Date.now() - AGENT_ACTIVE_MS;
+  const cutoff = Date.now() - AGENT_STALE_MS;
   let sessions;
   try {
     sessions = fs.readdirSync(root);
@@ -282,8 +322,11 @@ function countActiveAgents() {
       }
       for (const name of names) {
         if (!name.startsWith('agent-') || !name.endsWith('.jsonl')) continue;
+        const file = path.join(dir, name);
         try {
-          if (fs.statSync(path.join(dir, name)).mtimeMs > cutoff) n++;
+          const st = fs.statSync(file);
+          if (st.mtimeMs < cutoff) continue; // silent for ten minutes: gone, whatever it says
+          if (!agentFinished(file, st.size)) n++;
         } catch {
           /* vanished mid-scan, fine */
         }
