@@ -1,12 +1,15 @@
 # Changelog
 
-## 1.1.1 - 2026-08-24
+## 1.2.0 - 2026-09-02
 
-- **Feature:** A turn that ends by asking you something now shows ⚠️ instead of 🟢. Claude Code reports a typed question as a plain turn end, so until now the question sat there behind a green "done" marker. Turn it off with `claudeRadar.detectQuestions`.
-- **Feature:** Markers clean up after themselves. Interrupt with `Esc`, quit Claude, close the terminal: instead of a 💬 that keeps counting minutes nobody is working, the marker goes within 10 seconds. Radar cross-checks the sessions Claude Code lists in `~/.claude/sessions/` and reads the tail of the session transcript, which records the `Esc` interrupt that fires no hook.
-- **Feature:** A turn that failed shows 🔴 instead of 🟢, with its own sound. That covers a failed last tool call (a failure Claude recovered from still ends green) and, new in this release, a turn that died on Claude's side: a spend limit, a 529, an expired session, a connection lost mid-response. Those fire no hook and leave the session running, so until now the tab just kept counting minutes in which nothing could happen. The banner names the cause, so you can tell a retry from something you have to go fix. Configurable via `claudeRadar.markerError` and `claudeRadar.soundError`.
-- **Added:** `claudeRadar.minDoneSeconds` holds back the done banner for turns shorter than you care about. Questions, permissions, and failures always notify, however short the turn was.
-- **Updated:** The README no longer claims an `Esc`-interrupted turn is beyond Radar's reach. It only means the marker goes on the next check instead of instantly.
+- **Feature:** A turn that ends with a question shows ⚠️ instead of 🟢. Off switch: `claudeRadar.detectQuestions`.
+- **Feature:** A turn that died on Claude's side (spend limit, 529, expired session, lost connection) shows 🔴 the moment it happens, and the banner names the cause. A failed last tool call shows 🔴 too.
+- **Feature:** Markers clean up after themselves. Esc, quit Claude, close the terminal: the marker goes within 10 seconds.
+- **Added:** `claudeRadar.minDoneSeconds` holds back the done banner for short turns. Questions, permissions and failures always notify.
+- **Improved:** The agent count holds while an agent thinks or builds, and drops it seconds after it finishes.
+- **Improved:** Claude never waits for Radar: the hook after every tool call runs async.
+- **Fixed:** A failed tool call right after a permission prompt no longer leaves ⚠️ standing.
+- **Updated:** Requires Claude Code 2.1.247 or newer.
 
 ## 1.1.0 - 2026-08-11
 
