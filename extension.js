@@ -6,7 +6,8 @@
 //    key. In-memory only, no per-window settings writes.
 // 2. Claude Code hooks write a marker file per event to
 //    ~/.claude/tab-status/<sha256(project path)[0..16]>, content = event
-//    label (working | waiting | stop).
+//    label (working | waiting | stop | error | interrupt), for 'error' followed
+//    by the reason on a second line.
 // 3. Each window watches only its own file. When an attention event
 //    (needs you | done) shows up and the window is unfocused -> marker in
 //    the title + macOS banner with sound (terminal-notifier, osascript
@@ -33,8 +34,10 @@ const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
 const SESSIONS_DIR = path.join(os.homedir(), '.claude', 'sessions');
 const CONTEXT_KEY = 'claudeRadar.status';
 const TITLE_VAR = '${claudeRadarStatus}';
-// 'prompt' is 'working' with a reset clock (see check()), not a state of its own.
-const LABELS = ['prompt', 'working', 'waiting', 'stop'];
+// 'prompt' is 'working' with a reset clock (see check()), not a state of its
+// own. 'error' comes from StopFailure, 'interrupt' from a tool call the user
+// aborted with Esc; check() handles both.
+const LABELS = ['prompt', 'working', 'waiting', 'stop', 'error', 'interrupt'];
 const PEEK_MS = 1000; // focused window: show an attention marker briefly, then hide it
 
 // One hook per event, each writes an event label into the marker file.
@@ -82,6 +85,31 @@ const stopMarker =
   `elif command -v python3 >/dev/null 2>&1; then printf '%s' "$in" | A="$a" python3 -c '${ACTIVE_PY}' 2>/dev/null | grep -q Y && lbl=working; fi; ` +
   `printf '%s' "$lbl" ${WRITE_F}`;
 
+// A failed tool call is not the end of the turn: Claude reads the error and
+// carries on, so this flips back to 'working' exactly like PostToolUse (which
+// does not fire for failures). One exception: is_interrupt marks a call the
+// user aborted with Esc. Nothing continues after that, so the marker goes.
+const INTERRUPT_JQ = `.is_interrupt == true`;
+const INTERRUPT_PY = `import sys,json;print("Y" if json.load(sys.stdin).get("is_interrupt") is True else "N")`;
+const failureMarker =
+  `${MARKER_F}; in="$(cat)"; lbl=working; ` +
+  `if command -v jq >/dev/null 2>&1; then printf '%s' "$in" | jq -e '${INTERRUPT_JQ}' >/dev/null 2>&1 && lbl=interrupt; ` +
+  `elif command -v python3 >/dev/null 2>&1; then printf '%s' "$in" | python3 -c '${INTERRUPT_PY}' 2>/dev/null | grep -q Y && lbl=interrupt; fi; ` +
+  `printf '%s' "$lbl" ${WRITE_F}`;
+
+// The turn died on Claude's side: a spend limit, a 529, an expired session, a
+// connection lost mid-response. Claude Code ends it with StopFailure instead
+// of Stop, and last_assistant_message carries the text it shows in the
+// terminal. Label 'error', the message on a second line, so the banner can say
+// why (see shortReason()). Without jq or python3 the label goes out alone.
+const REASON_JQ = `.last_assistant_message // .error_details // .error // ""`;
+const REASON_PY = `import sys,json;d=json.load(sys.stdin);print(d.get("last_assistant_message") or d.get("error_details") or d.get("error") or "")`;
+const stopFailureMarker =
+  `${MARKER_F}; in="$(cat)"; r=""; ` +
+  `if command -v jq >/dev/null 2>&1; then r="$(printf '%s' "$in" | jq -r '${REASON_JQ}' 2>/dev/null)"; ` +
+  `elif command -v python3 >/dev/null 2>&1; then r="$(printf '%s' "$in" | python3 -c '${REASON_PY}' 2>/dev/null)"; fi; ` +
+  `printf 'error\\n%s' "$r" ${WRITE_F}`;
+
 const HOOK_SPECS = [
   // A new prompt shows 'working' like every other event, but with a fresh
   // clock: its own label separates "you just sent something" from the
@@ -99,7 +127,7 @@ const HOOK_SPECS = [
   // something that had just finished on its own.
   {
     event: 'Notification',
-    matcher: 'permission_prompt|idle_prompt|elicitation_dialog|agent_needs_input',
+    matcher: 'permission_prompt|idle_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input',
     command: writeMarker('waiting'),
   },
   { event: 'PermissionRequest', matcher: '', command: writeMarker('waiting') },
@@ -113,8 +141,18 @@ const HOOK_SPECS = [
   // AskUserQuestion the title stayed empty for the rest of a long run (e.g.
   // a multi-agent audit) once a permission prompt had been acknowledged.
   // The final Stop still wins: it fires after the last PostToolUse.
-  { event: 'PostToolUse', matcher: '', command: writeMarker('working') },
+  // async: Claude Code would otherwise wait ~30 ms for the shell after every
+  // tool call, hundreds of times in a long turn. Ordering stays safe without
+  // the wait: the next event that could contradict 'working' (Stop, a
+  // question, a permission) only arrives after another model response,
+  // seconds later.
+  { event: 'PostToolUse', matcher: '', command: writeMarker('working'), async: true },
+  // A failed tool call gets this event instead of PostToolUse. Without it, a
+  // permission prompt followed by a failing call left ⚠️ standing until the
+  // next successful call.
+  { event: 'PostToolUseFailure', matcher: '', command: failureMarker },
   { event: 'Stop', matcher: '', command: stopMarker }, // done - unless background work is still running
+  { event: 'StopFailure', matcher: '', command: stopFailureMarker }, // the turn died on Claude's side
 ];
 
 // Binaries detected on activation (Apple Silicon / Intel)
@@ -271,8 +309,8 @@ function updateAgentCount() {
 //    marker hangs forever, running clock included. A pid that no longer
 //    answers proves nobody is working in this project.
 // 2. The transcript. sessionId names the JSONL under PROJECTS_DIR, which
-//    records two events no hook reports: the Esc interrupt (Claude Code fires
-//    nothing at all for it) and a failed tool call.
+//    records two events no hook reports: the Esc interrupt between two tool
+//    calls (Claude Code fires nothing at all for it) and a failed tool call.
 
 // Sessions of this project whose process still answers. undefined means "can
 // not tell": no session files at all, i.e. an older Claude Code without the
@@ -336,15 +374,9 @@ let sawInterrupt = false;
 // plain Stop - so the marker used to say "done" and the question sat there
 // unanswered. Measured over 7528 real turn endings, 3 % close with a question.
 let lastAssistantText = '';
-// Why the turn died, when it died on Claude's side. These end a turn without
-// any hook firing AND without the process exiting, so neither the Stop hook nor
-// the liveness check notices: the marker would keep counting minutes in which
-// nothing can possibly happen. Seen in the wild: spend limit reached, 529
-// Overloaded, expired OAuth session, connection or server lost mid-response.
-let apiErrorReason = '';
-
-// Squeeze an API error message into a banner subtitle. Deliberately generic:
-// the wordings change between Claude Code releases, so this cuts at the first
+// Squeeze the message of a turn that died on Claude's side (from the
+// StopFailure payload) into a banner subtitle. Deliberately generic: the
+// wordings change between Claude Code releases, so this cuts at the first
 // sentence boundary instead of matching texts we happen to know today.
 function shortReason(text) {
   const s = text.replace(/^API Error:\s*/, '').split(/[.·\n]/)[0].trim();
@@ -377,14 +409,9 @@ function scanTranscriptLine(line) {
   if (!Array.isArray(content)) return; // a typed prompt is a plain string
 
   if (d.type === 'assistant') {
-    // Claude Code flags its own error messages, so no text matching is needed.
-    // They are not Claude's closing words either, hence the early return.
-    if (d.isApiErrorMessage === true) {
-      for (const b of content) {
-        if (b && b.type === 'text' && typeof b.text === 'string') apiErrorReason = shortReason(b.text);
-      }
-      return;
-    }
+    // Claude Code flags its own error messages; they are not Claude's closing
+    // words. (The StopFailure hook reports them, not the transcript.)
+    if (d.isApiErrorMessage === true) return;
     // Claude splits one message across several lines, one per content block,
     // so the last text block seen is the turn's closing text.
     for (const b of content) {
@@ -470,8 +497,8 @@ function elapsedLabel(since) {
 }
 
 // label: 'working' | 'waiting' | 'stop' | 'error' sets the matching marker,
-// null removes it. 'error' is the only one no hook writes: it is derived in
-// check() from the transcript when a turn ended on a failed tool call.
+// null removes it. 'error' comes from the StopFailure hook, or check() derives
+// it from the transcript when a turn ended on a failed tool call.
 function setMarker(label) {
   let marker = '';
   if (label) {
@@ -652,14 +679,17 @@ function hooksInstalled() {
       for (const [event, key] of pairs) (m[event] = m[event] || new Set()).add(key);
       return m;
     };
-    const expected = byEvent(HOOK_SPECS.map((s) => [s.event, s.matcher + '\u0000' + s.command]));
+    // The async flag is part of the key too: 1.2.0 made PostToolUse async with
+    // an unchanged command, and a key without it would never reconcile that.
+    const keyOf = (matcher, h) =>
+      String(matcher || '') + '\u0000' + String(h.command || '') + '\u0000' + (h.async === true ? 'async' : '');
+    const expected = byEvent(HOOK_SPECS.map((s) => [s.event, keyOf(s.matcher, s)]));
     const installed = byEvent(
       Object.entries(json.hooks || {}).flatMap(([event, groups]) =>
         (groups || []).flatMap((g) =>
           (g.hooks || [])
-            .map((h) => String(h.command || ''))
-            .filter((c) => c.includes('tab-status'))
-            .map((c) => [event, String(g.matcher || '') + '\u0000' + c])
+            .filter((h) => String(h.command || '').includes('tab-status'))
+            .map((h) => [event, keyOf(g.matcher, h)])
         )
       )
     );
@@ -737,7 +767,9 @@ async function installHooks(auto = false) {
   for (const spec of HOOK_SPECS) {
     // Remove our own stale entries (upgrade), then insert fresh
     const groups = stripOwnHooks(json.hooks[spec.event]);
-    groups.push({ matcher: spec.matcher, hooks: [{ type: 'command', command: spec.command }] });
+    const hook = { type: 'command', command: spec.command };
+    if (spec.async) hook.async = true;
+    groups.push({ matcher: spec.matcher, hooks: [hook] });
     json.hooks[spec.event] = groups;
   }
   if (JSON.stringify(json.hooks) === before) {
@@ -905,15 +937,12 @@ async function activate(context) {
     lastToolFailed = false;
     sawInterrupt = false;
     lastAssistantText = '';
-    apiErrorReason = '';
     return setMarker(null);
   };
 
   // waiting/stop/error are attention events. In the focused window, "peek":
   // show the marker ~1 s, then hide it, without banner/sound. The user sees it
   // once, then the tab is quiet again. Unfocused: persistent marker + banner.
-  // Shared by the hook path and the sweep, which raises the same kind of event
-  // when Claude's side of a turn died.
   const showAttention = (label, ranFor = '', ranMs = 0, reason = '') => {
     clearTimeout(peekTimer); // a running peek must never outlive a new event
     currentLabel = label;
@@ -945,19 +974,6 @@ async function activate(context) {
     scanTranscripts(sessions);
     if (sawInterrupt) {
       clearState(); // resets sawInterrupt
-      return true;
-    }
-    if (apiErrorReason !== '') {
-      // The turn died on Claude's side: no hook fires and the process lives on,
-      // so this is the only place that can tell you. Reported once, not on
-      // every tick - the next prompt is what starts a new turn.
-      const reason = apiErrorReason;
-      apiErrorReason = '';
-      const ranFor = workingSince ? elapsedLabel(workingSince) : '';
-      const ranMs = workingSince ? Date.now() - workingSince : 0;
-      workingSince = null;
-      agentCount = 0;
-      showAttention('error', ranFor, ranMs, reason);
       return true;
     }
     return false;
@@ -992,9 +1008,14 @@ async function activate(context) {
       } catch {
         return; // file gone or another window was faster
       }
+      // First line is the label; StopFailure adds its reason on a second line.
       let label = '';
+      let reason = '';
       try {
-        label = fs.readFileSync(claim, 'utf8').trim();
+        const raw = fs.readFileSync(claim, 'utf8');
+        const nl = raw.indexOf('\n');
+        label = (nl === -1 ? raw : raw.slice(0, nl)).trim();
+        if (nl !== -1) reason = raw.slice(nl + 1).trim();
       } finally {
         try {
           fs.unlinkSync(claim);
@@ -1003,6 +1024,16 @@ async function activate(context) {
         }
       }
       if (!LABELS.includes(label)) label = 'stop'; // unexpected content -> treat as done
+      // Esc while a tool ran: nothing finished and nothing continues, so no
+      // marker at all - the conclusion the sweep reaches from the transcript,
+      // only right away.
+      if (label === 'interrupt') {
+        clearState();
+        return;
+      }
+      // Only the StopFailure hook brings a reason. A failed last tool call
+      // (below) has none; its banner just says "Failed".
+      const why = label === 'error' ? shortReason(reason) : '';
       // The Stop hook can't know whether the turn ended on a failed tool call,
       // so the transcript decides between done and failed. Scanning here and
       // not just on the tick matters: Stop lands milliseconds after the last
@@ -1041,7 +1072,6 @@ async function activate(context) {
         lastToolFailed = false;
         sawInterrupt = false;
         lastAssistantText = '';
-        apiErrorReason = '';
       } else if (label === 'working') {
         if (!workingSince) workingSince = Date.now();
       } else {
@@ -1061,7 +1091,7 @@ async function activate(context) {
         setMarker('working');
         return;
       }
-      showAttention(label, ranFor, ranMs);
+      showAttention(label, ranFor, ranMs, why);
     };
     const ownName = path.basename(file);
     let debounce;

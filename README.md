@@ -28,7 +28,7 @@
 
 ## Requirements
 
-- VS Code ≥ 1.93 · Claude Code · **macOS only**
+- VS Code ≥ 1.93 · Claude Code ≥ 2.1.247 · **macOS only**
 - `terminal-notifier` (Homebrew) makes banners clickable; without it you still get notification + sound
 
 ## Setup
@@ -39,18 +39,20 @@ Radar offers to set itself up on first launch and keeps reminding you until it's
 
 - **No network, no telemetry.** Everything happens in local files.
 - **Event-driven, not polling.** Idle cost is effectively zero. One exception: while a marker is on display, a light scan runs every 10 s (agent count, and whether a Claude is still alive here). With an empty title, the normal state, nothing runs at all.
+- **No latency for Claude.** The hook after every tool call runs async, so Claude never waits for Radar; the other hooks fire once per turn.
 - **Safe config writes.** Atomic, with a backup. Removal is one command.
 - **Open source.** [Full code on GitHub](https://github.com/seeligmx/radar-for-claude-code).
 
 ## How it works
 
-Six Claude hooks drop a file in `~/.claude/tab-status/`, named `sha256(project path)` (first 16 hex chars, realpath-resolved so symlinks match). The content is the status:
+Eight Claude hooks drop a file in `~/.claude/tab-status/`, named `sha256(project path)` (first 16 hex chars, realpath-resolved so symlinks match). The content is the status:
 
 - `UserPromptSubmit` → `prompt` (shows `working`, purely visual, no banner/sound; its own label so a new prompt restarts the elapsed-time clock)
 - `Notification` / `PermissionRequest` → `waiting`
 - `PreToolUse` + `AskUserQuestion` → `waiting` (a question needs you too; its own hook, since AskUserQuestion fires neither Stop nor Notification)
-- `PostToolUse` → `working` (every completed tool call flips back to working, so an answered question or a granted permission doesn't leave the title empty while Claude keeps going)
+- `PostToolUse` / `PostToolUseFailure` → `working` (every completed tool call flips back to working, failed ones too, since Claude reads the error and carries on; so an answered question or a granted permission doesn't leave the title empty while Claude keeps going). A call aborted with `Esc` clears the marker instead: nothing finished, nothing continues.
 - `Stop` → `stop` (done, or ⚠️ when the turn ends by asking you something, or 🔴 when its last tool call failed), unless background work is still running, then `working` stays. Subagents, workflows, and monitors count as work (they finish and wake the session); background shell tasks don't, since a dev server Claude started would otherwise hold the working marker forever. Want shell tasks to count? Turn on `claudeRadar.shellTasksKeepWorking`.
+- `StopFailure` → `error` (🔴, the turn died on Claude's side: a spend limit, a 529, an expired session, a connection lost mid-response. The banner names the cause, so you know whether to retry or to go fix something.)
 
 Each window watches only its own file and shows the marker from **state + focus**:
 
@@ -60,11 +62,10 @@ Each window watches only its own file and shows the marker from **state + focus*
 
 While `working` shows, Radar also counts the subagents running in this project: Claude Code keeps one transcript file per agent under `~/.claude/projects/`, and a transcript written to within the last two minutes counts as a running agent (checked every 10 s, read-only). That's the 🤖8 in the title.
 
-While a marker is on display, Radar also verifies it. Claude Code lists every running session in `~/.claude/sessions/<pid>.json` with its working directory; if no live process belongs to this project any more, the marker was lying and goes. The same pass reads the tail of the session transcript, which records three things no hook reports:
+While a marker is on display, Radar also verifies it. Claude Code lists every running session in `~/.claude/sessions/<pid>.json` with its working directory; if no live process belongs to this project any more, the marker was lying and goes. The same pass reads the tail of the session transcript, which records two things no hook reports:
 
-- An `Esc` interrupt. The marker goes, deliberately without a "done" marker, since nothing finished.
+- An `Esc` interrupt between two tool calls. The marker goes, deliberately without a "done" marker, since nothing finished. (`Esc` during a tool call does reach a hook and clears right away.)
 - A failed tool call. Only the turn's *last* tool result counts for 🔴, so a failure Claude recovered from in the same turn still ends green. Measured across 1464 real turns, that marks 2 % of them.
-- A turn that died on Claude's side: a spend limit, a 529, an expired session, a connection lost mid-response. These fire no hook *and* leave the process running, so nothing else can notice them. Radar shows 🔴 and puts the reason in the banner, so you know whether to retry or to go fix something.
 
 Stale files (sessions with no matching window) are cleaned up after 24 h.
 
@@ -72,7 +73,7 @@ Stale files (sessions with no matching window) are cleaned up after 24 h.
 
 - The marker is text (emoji) in the title, not a native tab badge, macOS doesn't allow those.
 - `Stop` fires after every response. Fine for the marker and banner (idempotent, one banner per project, focused windows skipped).
-- Interrupting Claude with `Esc` still fires no hook, so the marker clears on the next sweep (within 10 s) rather than instantly.
+- `Esc` between two tool calls fires no hook, so the marker clears on the next sweep (within 10 s) rather than instantly. `Esc` during a tool call does.
 - Marker verification needs `~/.claude/sessions/`, which older Claude Code versions don't write. Without it Radar leaves every marker alone, exactly as before.
 - 🔴 means the turn failed: either its last tool call failed, or Claude's side died on it. A task Claude explains it can't do ends green, since nothing technically failed.
 - Question detection reads the last non-empty line of Claude's closing text. A question phrased mid-paragraph, or one without a question mark, ends green. Measured across 7528 real turn endings, 3 % close on a question.

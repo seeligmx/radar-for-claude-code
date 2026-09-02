@@ -32,7 +32,7 @@ fs.writeFileSync(
   fs.readFileSync(SRC, 'utf8') +
     `\nmodule.exports.__test = {
        liveSessionsHere, scanTranscriptLine, scanTranscripts, slugFor, tailOffsets, shortReason,
-       getApiError: () => apiErrorReason, setApiError: (v) => { apiErrorReason = v; },
+       getText: () => lastAssistantText, setText: (v) => { lastAssistantText = v; },
        getInterrupt: () => sawInterrupt, setInterrupt: (v) => { sawInterrupt = v; },
        getFailed: () => lastToolFailed, setFailed: (v) => { lastToolFailed = v; },
      };\n`
@@ -48,8 +48,8 @@ const {
   slugFor,
   tailOffsets,
   shortReason,
-  getApiError,
-  setApiError,
+  getText,
+  setText,
   getInterrupt,
   setInterrupt,
   getFailed,
@@ -282,8 +282,8 @@ process.on('exit', () => fs.rmSync(HOME, { recursive: true, force: true }));
 
 // --- API errors ------------------------------------------------------------
 
-// The five wordings actually seen in the transcripts, with what a banner
-// should say about them.
+// The five wordings actually seen in StopFailure payloads and transcripts,
+// with what a banner should say about them.
 const API_ERRORS = [
   ["You've hit your monthly spend limit · raise it at claude.ai/settings/usage", "You've hit your monthly spend limit"],
   ['API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment.', '529 Overloaded'],
@@ -305,29 +305,14 @@ test('an empty or unknown error message still yields a reason', () => {
   assert.equal(shortReason('Something new nobody has seen'), 'Something new nobody has seen');
 });
 
-test('a flagged error line is picked up, an ordinary answer is not', () => {
-  const flagged = (text) =>
-    JSON.stringify({ type: 'assistant', isApiErrorMessage: true, message: { role: 'assistant', content: [{ type: 'text', text }] } });
-
-  setApiError('');
-  scanTranscriptLine(flagged('API Error: 529 Overloaded. Try again.'));
-  assert.equal(getApiError(), '529 Overloaded');
-
-  setApiError('');
-  scanTranscriptLine(
-    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'I hit an API Error: 529 earlier.' }] } })
-  );
-  assert.equal(getApiError(), '', 'talking about an error is not having one');
-});
-
 test('an error message is not mistaken for the turn\'s closing words', () => {
-  setInterrupt(false);
+  setText('');
   scanTranscriptLine(
     JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Soll ich das committen?' }] } })
   );
   scanTranscriptLine(
     JSON.stringify({ type: 'assistant', isApiErrorMessage: true, message: { role: 'assistant', content: [{ type: 'text', text: 'API Error: 529 Overloaded.' }] } })
   );
-  // The question stays the closing text; the error is tracked separately.
-  assert.equal(getApiError(), '529 Overloaded');
+  // The question stays the closing text; the StopFailure hook owns the error.
+  assert.equal(getText(), 'Soll ich das committen?');
 });
