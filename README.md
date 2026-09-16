@@ -67,6 +67,8 @@ While a marker is on display, Radar also verifies it. Claude Code lists every ru
 - An `Esc` interrupt. The marker goes, deliberately without a "done" marker, since nothing finished.
 - A failed tool call. Only the turn's *last* tool result counts for 🔴, so a failure Claude recovered from in the same turn still ends green. Measured across 1464 real turns, that marks 2 % of them.
 
+Since Claude Code 2.1.269 the same registry entry also carries the session's own status, and the sweep reads that too. Every session of the project idle since your prompt means the turn ended without a `Stop`, and the marker goes. A session waiting for a permission or a dialog shows ⚠️, banner included, whether or not a hook reported it. This is a backstop for the hooks, not a replacement: a hook reports the moment it happens, the sweep within 10 s.
+
 Stale files (sessions with no matching window) are cleaned up after 24 h.
 
 ## Limits
@@ -74,7 +76,7 @@ Stale files (sessions with no matching window) are cleaned up after 24 h.
 - The marker is text (emoji) in the title, not a native tab badge, macOS doesn't allow those.
 - `Stop` fires after every response. Fine for the marker and banner (idempotent, one banner per project, focused windows skipped).
 - Interrupting Claude with `Esc` still fires no hook Radar can use, so the marker clears on the next sweep (within 10 s) rather than instantly.
-- Marker verification needs `~/.claude/sessions/`, which older Claude Code versions don't write. Without it Radar leaves every marker alone, exactly as before.
+- Marker verification needs `~/.claude/sessions/`, which older Claude Code versions don't write, and the status backstop needs the status field in it (Claude Code 2.1.269). Without them Radar leaves every marker alone, exactly as before.
 - 🔴 means the turn failed: either its last tool call failed, or Claude's side died on it. A task Claude explains it can't do ends green, since nothing technically failed.
 - Question detection reads the last non-empty line of Claude's closing text. A question phrased mid-paragraph, or one without a question mark, ends green. Measured across 7528 real turn endings, 3 % close on a question.
 - The agent count reads the transcripts: an agent killed together with its session leaves no final answer behind and stays in the count for up to ten minutes. Agents running in Anthropic's cloud leave no local transcripts and aren't counted.

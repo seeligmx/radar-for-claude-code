@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.0 - 2026-09-16
+
+- **Feature:** Radar reads the status Claude Code writes for each session (Claude Code 2.1.269 or newer). A 💬 left standing after the turn ended goes within 10 seconds, hooks or not. A permission prompt or dialog no hook reported shows ⚠️, and the banner says which: "Needs you: permission prompt".
+
 ## 1.2.0 - 2026-09-02
 
 - **Feature:** A turn that ends with a question shows ⚠️ instead of 🟢. Off switch: `claudeRadar.detectQuestions`.
