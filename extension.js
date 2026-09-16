@@ -76,13 +76,20 @@ const writeMarker = (label) => `${MARKER_F}; printf '%s' "${label}" ${WRITE_F}`;
 // the status dir (the hook string stays static, the toggle takes effect
 // immediately without reinstalling hooks). If .type is missing (older
 // Claude Code version), the task counts as work -> pre-filter behavior.
+//
+// The 'working' it writes then carries 'background' on a second line: the
+// session really is idle while it waits for the task to wake it, and its
+// registry entry says so (see registryVerdict), so the extension must know
+// that this 'working' is held on purpose and not mistake the idle for a turn
+// that ended without a Stop. An extension older than the hook ignores the
+// line, check() only reads the first one for the label.
 const ACTIVE_JQ = `((.status // .state) as $s | $s=="running" or $s=="in_progress" or $s=="pending") and ($a=="1" or .type != "shell")`;
 const ACTIVE_PY = `import sys,json,os;d=json.load(sys.stdin);ts=d.get("background_tasks") or [];print("Y" if any((t.get("status") or t.get("state")) in ("running","in_progress","pending") and (os.environ.get("A")=="1" or t.get("type")!="shell") for t in ts) else "N")`;
 const stopMarker =
   `${MARKER_F}; in="$(cat)"; lbl=stop; a=0; [ -f "$d/.shell-keeps-working" ] && a=1; ` +
   `if command -v jq >/dev/null 2>&1; then printf '%s' "$in" | jq -e --arg a "$a" 'any((.background_tasks // [])[]?; ${ACTIVE_JQ})' >/dev/null 2>&1 && lbl=working; ` +
   `elif command -v python3 >/dev/null 2>&1; then printf '%s' "$in" | A="$a" python3 -c '${ACTIVE_PY}' 2>/dev/null | grep -q Y && lbl=working; fi; ` +
-  `printf '%s' "$lbl" ${WRITE_F}`;
+  `if [ "$lbl" = working ]; then printf 'working\\nbackground'; else printf '%s' "$lbl"; fi ${WRITE_F}`;
 
 // The turn died on Claude's side: a spend limit, a 529, an expired session, a
 // connection lost mid-response. Claude Code ends it with StopFailure instead
@@ -336,8 +343,8 @@ function updateAgentCount() {
   return true;
 }
 
-// Live sessions and their transcripts. Two things Radar cannot learn from
-// hooks come from here, both read-only and both only while a marker shows:
+// Live sessions and their transcripts. Three things Radar cannot learn from
+// hooks come from here, all read-only and all only while a marker shows:
 //
 // 1. Liveness. A hook fires only while Claude runs. Dies the process mid-turn
 //    (crash, closed terminal, window reload), no Stop ever arrives and the
@@ -347,6 +354,9 @@ function updateAgentCount() {
 //    records two events no hook reports: the Esc interrupt (Claude Code fires
 //    nothing usable for it, see the PostToolUseFailure note above) and a
 //    failed tool call.
+// 3. The session's own state (registryVerdict below): since Claude Code
+//    2.1.269 the registry entry says whether its session is busy, idle or
+//    waiting for you. Written from the CLI's state machine, not from hooks.
 
 // Sessions of this project whose process still answers. undefined means "can
 // not tell": no session files at all, i.e. an older Claude Code without the
@@ -397,6 +407,44 @@ function liveSessionsHere(root) {
     if (cwd === root || cwd.startsWith(root + path.sep)) here.push(d);
   }
   return sawAny ? here : undefined;
+}
+
+// What the sessions say about the turn themselves. The registry entry carries
+// status 'busy' | 'idle' | 'waiting' (| 'shell'), waitingFor naming the
+// prompt ('permission prompt', 'input needed'), and statusUpdatedAt stamping
+// the change (read off Claude Code 2.1.273: the CLI maps its own
+// running/requires_action/idle onto these, and only writes on a change). So
+// it also records what no hook reports: Esc during a tool call, a hook that
+// never ran, a dialog outside the Notification matcher. `since` is when the
+// marker started: an older entry belongs to an earlier turn, or to a session
+// that has been idle all along, and proves nothing about this one - which is
+// also what keeps the race at turn start harmless, when the prompt hook has
+// fired but the CLI has not yet written 'busy'.
+// Returns { label: 'idle' } when every session of the project is idle and at
+// least one became so during this turn, { label: 'waiting', reason } when one
+// asks for input since then, undefined otherwise. undefined covers "can not
+// tell" (an older Claude Code without the field) as well as "someone is still
+// busy", and the caller must leave the marker alone either way.
+function registryVerdict(sessions, since) {
+  let idleAt = 0;
+  let reason;
+  for (const s of sessions) {
+    if (typeof s.status !== 'string') continue; // older Claude Code: no field
+    const at = typeof s.statusUpdatedAt === 'number' ? s.statusUpdatedAt : 0;
+    if (s.status === 'idle') {
+      idleAt = Math.max(idleAt, at);
+    } else if (s.status === 'waiting' && at >= since) {
+      reason = typeof s.waitingFor === 'string' ? s.waitingFor : '';
+    } else {
+      // busy, shell, a waiting from before this turn (another session's
+      // prompt, whose own hook has had its say), or a value this code does
+      // not know: someone may well be working, so no verdict.
+      return undefined;
+    }
+  }
+  if (reason !== undefined) return { label: 'waiting', reason };
+  if (idleAt >= since) return { label: 'idle' };
+  return undefined;
 }
 
 // Bytes already read per transcript. A file seen for the first time is only
@@ -596,7 +644,7 @@ function notify(label, ranFor = '', ranMs = 0, reason = '') {
     ? reason !== '' ? reason : ranFor ? 'Failed after ' + ranFor : 'Failed'
     : done
       ? ranFor ? 'Done after ' + ranFor : 'Done'
-      : 'Needs you';
+      : reason !== '' ? 'Needs you: ' + reason : 'Needs you';
   // A failed turn wants you more than a finished one does, so it borrows the
   // attention sound rather than the friendly one.
   const sound = failed
@@ -961,6 +1009,11 @@ async function activate(context) {
   // the other labels are events (peeked briefly when focused, then
   // acknowledged).
   let currentLabel = null;
+  // True while the Stop hook holds 'working' for background work (a
+  // workflow, a background agent, a shell task with the setting on). The
+  // session itself is idle then, waiting for the task to wake it, so the
+  // registry's idle must not end the turn. Any other event settles it.
+  let backgroundWork = false;
   let peekTimer; // hides the briefly shown marker in the active window again
   context.subscriptions.push({ dispose: () => clearTimeout(peekTimer) });
 
@@ -969,6 +1022,7 @@ async function activate(context) {
   const clearState = () => {
     currentLabel = null;
     workingSince = null;
+    backgroundWork = false;
     agentCount = 0;
     lastToolFailed = false;
     sawInterrupt = false;
@@ -995,9 +1049,10 @@ async function activate(context) {
   };
 
   // One read-only pass while a marker is on display: is anyone still working
-  // in this project, and did the transcript record an Esc interrupt? Both end
-  // the same way, with a marker that was lying removed. Returns true when it
-  // cleared, so the caller can stop.
+  // in this project, did the transcript record an Esc interrupt, and what do
+  // the sessions say about themselves? A marker that was lying is removed or
+  // corrected. Returns true when it changed the state, so the caller can
+  // stop.
   const sweep = () => {
     const root = projectRoot();
     if (!root) return false;
@@ -1011,6 +1066,25 @@ async function activate(context) {
     if (sawInterrupt) {
       clearState(); // resets sawInterrupt
       return true;
+    }
+    // The registry's verdict only matters against a 'working' marker: the
+    // attention labels came from a hook that knew better, or have already
+    // been seen. A turn that ended without a Stop is cleared like the Esc
+    // above, deliberately without a done banner - nobody said how it ended.
+    // Not while the marker is held for background work: idle is the expected
+    // state then. A prompt the hooks missed gets the same "needs you" a hook
+    // would raise, plus the reason the registry names.
+    if (currentLabel === 'working' && workingSince) {
+      const verdict = registryVerdict(sessions, workingSince);
+      if (verdict && verdict.label === 'idle' && !backgroundWork) {
+        clearState();
+        return true;
+      }
+      if (verdict && verdict.label === 'waiting') {
+        workingSince = null;
+        showAttention('waiting', '', 0, verdict.reason);
+        return true;
+      }
     }
     return false;
   };
@@ -1061,8 +1135,12 @@ async function activate(context) {
       }
       if (!LABELS.includes(label)) label = 'stop'; // unexpected content -> treat as done
       // Only the StopFailure hook brings a reason. A failed last tool call
-      // (below) has none; its banner just says "Failed".
+      // (below) has none; its banner just says "Failed". The Stop hook's
+      // 'working' says 'background' there when it holds the marker for
+      // background work; the per-tool-call repeats and a prompt say nothing,
+      // and either one means the session is awake again.
       const why = label === 'error' ? shortReason(reason) : '';
+      const heldForBackground = label === 'working' && reason === 'background';
       // The Stop hook can't know whether the turn ended on a failed tool call,
       // so the transcript decides between done and failed. Scanning here and
       // not just on the tick matters: Stop lands milliseconds after the last
@@ -1105,6 +1183,7 @@ async function activate(context) {
         if (!workingSince) workingSince = Date.now();
       } else {
         workingSince = null;
+        backgroundWork = false;
       }
       const wasWorking = currentLabel === 'working';
       // 'working' is a lasting state and always visible (even in the active
@@ -1112,6 +1191,7 @@ async function activate(context) {
       // while Claude is working.
       if (label === 'working') {
         currentLabel = 'working';
+        backgroundWork = heldForBackground;
         clearTimeout(peekTimer); // a running peek must never overwrite a new event
         // Entering 'working' counts agents right away instead of waiting up
         // to a poll tick; the frequent PostToolUse repeats don't re-scan,

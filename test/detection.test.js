@@ -31,7 +31,7 @@ fs.writeFileSync(
   COPY,
   fs.readFileSync(SRC, 'utf8') +
     `\nmodule.exports.__test = {
-       liveSessionsHere, scanTranscriptLine, scanTranscripts, slugFor, tailOffsets, shortReason,
+       liveSessionsHere, registryVerdict, scanTranscriptLine, scanTranscripts, slugFor, tailOffsets, shortReason,
        getText: () => lastAssistantText, setText: (v) => { lastAssistantText = v; },
        getInterrupt: () => sawInterrupt, setInterrupt: (v) => { sawInterrupt = v; },
        getFailed: () => lastToolFailed, setFailed: (v) => { lastToolFailed = v; },
@@ -43,6 +43,7 @@ const load = Module._load;
 Module._load = (req, ...rest) => (req === 'vscode' ? { workspace: {}, window: {}, commands: {} } : load(req, ...rest));
 const {
   liveSessionsHere,
+  registryVerdict,
   scanTranscriptLine,
   scanTranscripts,
   slugFor,
@@ -315,4 +316,66 @@ test('an error message is not mistaken for the turn\'s closing words', () => {
   );
   // The question stays the closing text; the StopFailure hook owns the error.
   assert.equal(getText(), 'Soll ich das committen?');
+});
+
+// --- the registry's own verdict --------------------------------------------
+// Shapes as written by Claude Code 2.1.273: status plus statusUpdatedAt, and
+// waitingFor while waiting. T0 is when the marker started.
+
+const T0 = 1_000_000;
+const entry = (status, at, extra = {}) => ({ sessionId: 's', cwd: '/work/app', status, statusUpdatedAt: at, ...extra });
+
+test('a session that went idle during the turn ends it', () => {
+  assert.deepEqual(registryVerdict([entry('idle', T0 + 5000)], T0), { label: 'idle' });
+});
+
+test('an idle from before the prompt proves nothing: the race at turn start', () => {
+  // The prompt hook has fired, the CLI has not yet written busy. Clearing here
+  // would wipe the marker of every fast-starting turn.
+  assert.equal(registryVerdict([entry('idle', T0 - 1)], T0), undefined);
+  assert.equal(registryVerdict([entry('idle', 0), entry('idle', T0 - 10)], T0), undefined);
+});
+
+test('an idle at exactly the marker time counts as during the turn', () => {
+  assert.deepEqual(registryVerdict([entry('idle', T0)], T0), { label: 'idle' });
+});
+
+test('a busy session keeps the turn open, whatever the others say', () => {
+  assert.equal(registryVerdict([entry('idle', T0 + 5000), entry('busy', T0 + 1)], T0), undefined);
+  assert.equal(registryVerdict([entry('busy', T0 + 1), entry('idle', T0 + 5000)], T0), undefined);
+});
+
+test('a waiting session asks for you and names the reason', () => {
+  assert.deepEqual(registryVerdict([entry('waiting', T0 + 1, { waitingFor: 'permission prompt' })], T0), {
+    label: 'waiting',
+    reason: 'permission prompt',
+  });
+  assert.deepEqual(registryVerdict([entry('waiting', T0 + 1)], T0), { label: 'waiting', reason: '' }, 'no reason given');
+});
+
+test('a waiting session outranks an idle one', () => {
+  assert.equal(
+    registryVerdict([entry('idle', T0 + 9000), entry('waiting', T0 + 1, { waitingFor: 'input needed' })], T0).label,
+    'waiting'
+  );
+});
+
+test("a waiting from before the turn is another session's prompt and blocks nothing but the verdict", () => {
+  assert.equal(registryVerdict([entry('waiting', T0 - 1), entry('idle', T0 + 5000)], T0), undefined);
+});
+
+test('without the status field there is no verdict', () => {
+  // An older Claude Code, or a registry entry mid-write.
+  assert.equal(registryVerdict([{ sessionId: 's', cwd: '/work/app' }], T0), undefined);
+  assert.equal(registryVerdict([], T0), undefined);
+});
+
+test('a status this code does not know is treated as busy', () => {
+  assert.equal(registryVerdict([entry('shell', T0 + 1)], T0), undefined);
+  assert.equal(registryVerdict([entry('paused', T0 + 1)], T0), undefined);
+});
+
+test('a missing timestamp counts as old', () => {
+  assert.equal(registryVerdict([{ sessionId: 's', cwd: '/w', status: 'idle' }], T0), undefined);
+  assert.equal(registryVerdict([{ sessionId: 's', cwd: '/w', status: 'waiting' }], T0), undefined);
 });

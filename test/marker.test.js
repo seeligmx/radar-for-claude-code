@@ -116,6 +116,12 @@ const startSession = () =>
     JSON.stringify({ pid: process.pid, sessionId: SESSION_ID, cwd: fs.realpathSync(PROJECT) })
   );
 const endSession = () => fs.rmSync(pidFile, { force: true });
+// The same entry with the session's own state, as Claude Code 2.1.269+ writes it.
+const setStatus = (status, at = Date.now(), extra = {}) =>
+  fs.writeFileSync(
+    pidFile,
+    JSON.stringify({ pid: process.pid, sessionId: SESSION_ID, cwd: fs.realpathSync(PROJECT), status, statusUpdatedAt: at, ...extra })
+  );
 
 const userLine = (blocks) => JSON.stringify({ type: 'user', message: { role: 'user', content: blocks } }) + '\n';
 const appendInterrupt = () => fs.appendFileSync(transcript, userLine([{ type: 'text', text: '[Request interrupted by user]' }]));
@@ -209,6 +215,66 @@ test('without a session registry the marker is never cleared', async () => {
   } finally {
     fs.renameSync(parked, SESSIONS);
   }
+});
+
+test('the registry going idle clears a working marker no Stop ever ended', async () => {
+  startSession();
+  await hook('prompt');
+  assert.match(title, /💬/);
+
+  setStatus('idle');
+  sweepTick();
+  assert.equal(title, '', 'ended without a Stop: cleared, and no done banner on a guess');
+});
+
+test('an idle older than the prompt is the race at turn start, not an ending', async () => {
+  setStatus('idle', Date.now() - 1000);
+  await hook('prompt');
+  sweepTick();
+  assert.match(title, /💬/, 'the CLI just has not written busy yet');
+});
+
+test('a busy session keeps the working marker', async () => {
+  setStatus('busy');
+  await hook('prompt');
+  sweepTick();
+  assert.match(title, /💬/);
+});
+
+test('a marker held for background work survives the idle session', async () => {
+  // The Stop hook keeps 'working' while a workflow or background agent runs.
+  // The session itself is idle then and says so in the registry; that idle
+  // is expected, not an ending.
+  startSession();
+  await hook('prompt');
+  await hook('working\nbackground');
+  setStatus('idle');
+  sweepTick();
+  assert.match(title, /💬/, 'background work holds the marker');
+
+  // The task wakes the session, a tool call fires the plain 'working', and
+  // from then on the registry decides again.
+  await hook('working');
+  sweepTick();
+  assert.equal(title, '', 'the plain working handed the verdict back');
+});
+
+test('a prompt the hooks missed still shows needs you, with the reason', async () => {
+  startSession();
+  await hook('prompt');
+  assert.match(title, /💬/);
+
+  banners.length = 0;
+  setStatus('waiting', Date.now(), { waitingFor: 'permission prompt' });
+  sweepTick();
+  assert.match(title, /⚠️/);
+  assert.match(bannerText(), /Needs you: permission prompt/);
+  // The next tick must not ring a second time: the marker is now an
+  // attention label the sweep leaves alone.
+  banners.length = 0;
+  sweepTick();
+  assert.equal(banners.length, 0);
+  startSession(); // back to an entry without state for the tests below
 });
 
 test('a turn that ended cleanly shows the done marker', async () => {

@@ -91,11 +91,13 @@ for (const [name, PATH] of Object.entries(PATHS)) {
       assert.equal(run('Stop', sub, PATH), 'stop', 'no parser: done, as before the feature');
       return;
     }
-    assert.equal(run('Stop', sub, PATH), 'working');
+    // The second line tells the extension the marker is held for background
+    // work, whose idle session must not read as an ended turn.
+    assert.equal(run('Stop', sub, PATH), 'working\nbackground');
     assert.equal(run('Stop', shell, PATH), 'stop', 'a dev server must not hold the marker');
     fs.writeFileSync(path.join(STATUS, '.shell-keeps-working'), '');
     try {
-      assert.equal(run('Stop', shell, PATH), 'working', 'unless the setting says so');
+      assert.equal(run('Stop', shell, PATH), 'working\nbackground', 'unless the setting says so');
     } finally {
       fs.unlinkSync(path.join(STATUS, '.shell-keeps-working'));
     }
