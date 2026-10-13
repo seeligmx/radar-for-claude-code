@@ -566,3 +566,126 @@ test('an idle session ends the marker even when a transcript still looks alive',
     startSession();
   }
 });
+
+// --- moving the clock -----------------------------------------------------------
+
+// The minute tick refreshes the elapsed time. The clock is moved, not waited on.
+const minuteTick = () => ticks.find((t) => t.ms === 60000).fn();
+const realNow = Date.now;
+const later = (minutes) => {
+  Date.now = () => realNow() + minutes * 60000;
+};
+const backToNow = () => {
+  Date.now = realNow;
+};
+
+// --- a ⚠️ whose prompt was answered somewhere else -----------------------------
+
+// Nothing fires when a permission is allowed. Answered from a phone or a
+// terminal, this window never gets the focus that would acknowledge its ⚠️,
+// so it stood until the tool call was through. The registry stamps the moment
+// the session goes back to work (measured live against Claude Code 2.1.296).
+
+test('a permission allowed elsewhere turns ⚠️ back into 💬', async () => {
+  setStatus('busy');
+  await hook('prompt');
+  setStatus('waiting', Date.now(), { waitingFor: 'permission prompt' });
+  await hook('waiting');
+  assert.match(title, /⚠️/);
+  try {
+    sweepTick();
+    assert.match(title, /⚠️/, 'still asking');
+
+    banners.length = 0;
+    setStatus('busy'); // allowed: the session stamps its way back to work
+    sweepTick();
+    assert.equal(title, '💬 ', 'Claude works again, and nobody had to look');
+    assert.equal(banners.length, 0, 'working never rings');
+
+    // From here on it is an ordinary working marker.
+    later(2);
+    minuteTick();
+    assert.equal(title, '💬 2m ', 'the clock started over when the work did');
+    appendAssistant('Fertig.');
+    await hook('stop');
+    assert.match(title, /🟢/);
+  } finally {
+    backToNow();
+    startSession();
+  }
+});
+
+test('a repeat of the same ⚠️ does not move the moment it is measured from', async () => {
+  // A prompt left open rings twice: PermissionRequest at once, the
+  // Notification six seconds later. The answer counts against the first.
+  setStatus('busy');
+  await hook('prompt');
+  await hook('waiting');
+  try {
+    setStatus('busy'); // answered, stamped after the first ⚠️
+    later(1);
+    await hook('waiting'); // the late repeat, a minute on in this test's clock
+    assert.match(title, /⚠️/);
+    sweepTick();
+    assert.equal(title, '💬 ', 'the stamp is newer than the ⚠️ it answered');
+  } finally {
+    backToNow();
+    startSession();
+  }
+});
+
+test('with two sessions the working one leaves the other one\'s ⚠️ alone', async () => {
+  // The second session lives in the parent process: a pid that answers.
+  const other = path.join(SESSIONS, `${process.ppid}.json`);
+  const otherStatus = (status, at = Date.now()) =>
+    fs.writeFileSync(other, JSON.stringify({ pid: process.ppid, sessionId: 'other', cwd: fs.realpathSync(PROJECT), status, statusUpdatedAt: at }));
+  setStatus('busy');
+  await hook('prompt');
+  setStatus('waiting', Date.now(), { waitingFor: 'permission prompt' });
+  await hook('waiting');
+  try {
+    otherStatus('busy'); // starts working after the ⚠️ showed
+    sweepTick();
+    assert.match(title, /⚠️/, 'the first session is still asking');
+
+    setStatus('busy'); // and now it is answered
+    sweepTick();
+    assert.match(title, /💬/);
+  } finally {
+    fs.rmSync(other, { force: true });
+    startSession();
+  }
+});
+
+test('a session busy since before the ⚠️ does not answer it', async () => {
+  // A question at the end of a turn waits in an idle session. Another session
+  // that has been working all along says nothing about it.
+  const other = path.join(SESSIONS, `${process.ppid}.json`);
+  fs.writeFileSync(
+    other,
+    JSON.stringify({ pid: process.ppid, sessionId: 'other', cwd: fs.realpathSync(PROJECT), status: 'busy', statusUpdatedAt: Date.now() - 60000 })
+  );
+  setStatus('busy');
+  await hook('prompt');
+  appendAssistant('Soll ich den ersten Weg nehmen?');
+  await hook('stop');
+  setStatus('idle');
+  try {
+    assert.match(title, /⚠️/);
+    sweepTick();
+    assert.match(title, /⚠️/, 'the question is still open');
+  } finally {
+    fs.rmSync(other, { force: true });
+    startSession();
+  }
+});
+
+test('without the status field a ⚠️ waits for its hook as before', async () => {
+  startSession(); // an older Claude Code: no status in the registry
+  await hook('prompt');
+  await hook('waiting');
+  sweepTick();
+  assert.match(title, /⚠️/);
+  await hook('working'); // the tool call ends, PostToolUse reports it
+  assert.match(title, /💬/);
+});

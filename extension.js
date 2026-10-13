@@ -463,6 +463,28 @@ function registryVerdict(sessions, since) {
   return undefined;
 }
 
+// The opposite question, asked against a ⚠️: has its prompt been answered?
+// No hook fires when you allow a permission; the next one comes when the tool
+// call that waited for it has finished. A ⚠️ answered from somewhere else (a
+// phone, a terminal: this window never got the focus that would have
+// acknowledged it) therefore stood through the whole command, long after
+// anyone was waiting. The registry does record the moment: the session
+// goes from waiting back to busy and stamps it (verified live against Claude
+// Code 2.1.296, answered after 3 s and after 25 s). `since` is when the ⚠️
+// showed. True when no session of the project is waiting any more and one
+// went to work after that. A session still waiting keeps the ⚠️ whoever else
+// is busy: with two sessions in a project, the working one must not take the
+// other's prompt off the title. Busy from before the ⚠️ proves nothing
+// either, that is a second session working all along.
+function workResumed(sessions, since) {
+  let resumed = false;
+  for (const s of sessions) {
+    if (s.status === 'waiting') return false;
+    if (s.status === 'busy' && typeof s.statusUpdatedAt === 'number' && s.statusUpdatedAt >= since) resumed = true;
+  }
+  return resumed;
+}
+
 // Bytes already read per transcript. A file seen for the first time is only
 // measured, never scanned: its history holds interrupts and errors from
 // earlier turns that must not fire now.
@@ -1024,6 +1046,8 @@ async function activate(context) {
   // session itself is idle then, waiting for the task to wake it, so the
   // registry's idle must not end the turn. Any other event settles it.
   let backgroundWork = false;
+  // When the ⚠️ on display first showed (see showAttention).
+  let waitingSince = 0;
   let peekTimer; // hides the briefly shown marker in the active window again
   context.subscriptions.push({ dispose: () => clearTimeout(peekTimer) });
 
@@ -1045,6 +1069,10 @@ async function activate(context) {
   // once, then the tab is quiet again. Unfocused: persistent marker + banner.
   const showAttention = (label, ranFor = '', ranMs = 0, reason = '') => {
     clearTimeout(peekTimer); // a running peek must never outlive a new event
+    // When this ⚠️ first showed: the sweep measures an answered prompt against
+    // it. A repeat keeps the time, a permission prompt alone arrives as two
+    // hook events.
+    if (label === 'waiting' && currentLabel !== 'waiting') waitingSince = Date.now();
     currentLabel = label;
     if (vscode.window.state.focused) {
       currentLabel = null; // counts as seen
@@ -1088,6 +1116,16 @@ async function activate(context) {
         clearState();
         return true;
       }
+    }
+    // A ⚠️ whose prompt has been answered goes back to 💬: Claude is working
+    // again, and no hook will say so before the tool call ends. The clock
+    // starts over, as it does when a hook reports the next tool call.
+    if (currentLabel === 'waiting' && workResumed(sessions, waitingSince)) {
+      currentLabel = 'working';
+      workingSince = Date.now();
+      updateAgentCount();
+      setMarker('working');
+      return true;
     }
     // The registry's verdict only matters against a 'working' marker: the
     // attention labels came from a hook that knew better, or have already

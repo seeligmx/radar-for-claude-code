@@ -31,7 +31,7 @@ fs.writeFileSync(
   COPY,
   fs.readFileSync(SRC, 'utf8') +
     `\nmodule.exports.__test = {
-       liveSessionsHere, registryVerdict, scanTranscriptLine, scanTranscripts, slugFor, tailOffsets, shortReason,
+       liveSessionsHere, registryVerdict, workResumed, scanTranscriptLine, scanTranscripts, slugFor, tailOffsets, shortReason,
        getText: () => lastAssistantText, setText: (v) => { lastAssistantText = v; },
        getInterrupt: () => sawInterrupt, setInterrupt: (v) => { sawInterrupt = v; },
        getFailed: () => lastToolFailed, setFailed: (v) => { lastToolFailed = v; },
@@ -44,6 +44,7 @@ Module._load = (req, ...rest) => (req === 'vscode' ? { workspace: {}, window: {}
 const {
   liveSessionsHere,
   registryVerdict,
+  workResumed,
   scanTranscriptLine,
   scanTranscripts,
   slugFor,
@@ -378,4 +379,37 @@ test('a status this code does not know is treated as busy', () => {
 test('a missing timestamp counts as old', () => {
   assert.equal(registryVerdict([{ sessionId: 's', cwd: '/w', status: 'idle' }], T0), undefined);
   assert.equal(registryVerdict([{ sessionId: 's', cwd: '/w', status: 'waiting' }], T0), undefined);
+});
+
+// --- a ⚠️ whose prompt has been answered ------------------------------------
+// Measured against Claude Code 2.1.296: allowing a permission takes the
+// session from waiting back to busy and stamps the moment. T0 is when the ⚠️
+// showed.
+
+test('a session back at work since the ⚠️ means the prompt was answered', () => {
+  assert.equal(workResumed([entry('busy', T0 + 3000)], T0), true);
+  assert.equal(workResumed([entry('busy', T0)], T0), true, 'at exactly the marker time counts');
+});
+
+test('a session still waiting keeps the ⚠️, whoever else is busy', () => {
+  // Two sessions in one project: the working one must not take the other's
+  // prompt off the title.
+  const asking = entry('waiting', T0 - 100, { waitingFor: 'permission prompt' });
+  assert.equal(workResumed([asking, entry('busy', T0 + 3000)], T0), false);
+  assert.equal(workResumed([entry('busy', T0 + 3000), asking], T0), false, 'in either order');
+  assert.equal(workResumed([asking], T0), false);
+});
+
+test('busy from before the ⚠️ proves nothing', () => {
+  // A second session that has been working all along.
+  assert.equal(workResumed([entry('busy', T0 - 1)], T0), false);
+  assert.equal(workResumed([entry('idle', T0 + 5000), entry('busy', T0 - 60000)], T0), false);
+});
+
+test('an idle session, an unknown status or no status at all never resume anything', () => {
+  assert.equal(workResumed([entry('idle', T0 + 5000)], T0), false, 'a question at the end of a turn waits in an idle session');
+  assert.equal(workResumed([entry('shell', T0 + 5000)], T0), false);
+  assert.equal(workResumed([{ sessionId: 's', cwd: '/work/app' }], T0), false, 'an older Claude Code');
+  assert.equal(workResumed([{ sessionId: 's', cwd: '/w', status: 'busy' }], T0), false, 'busy without a timestamp');
+  assert.equal(workResumed([], T0), false);
 });
