@@ -97,10 +97,34 @@ for (const [name, PATH] of Object.entries(PATHS)) {
     assert.equal(run('Stop', shell, PATH), 'stop', 'a dev server must not hold the marker');
     fs.writeFileSync(path.join(STATUS, '.shell-keeps-working'), '');
     try {
-      assert.equal(run('Stop', shell, PATH), 'working\nbackground', 'unless the setting says so');
+      // With the setting on a shell task holds too, but says what it is: a
+      // command still running is not Claude still working.
+      assert.equal(run('Stop', shell, PATH), 'working\nshell', 'unless the setting says so');
     } finally {
       fs.unlinkSync(path.join(STATUS, '.shell-keeps-working'));
     }
+  });
+
+  test(`[${name}] Stop: the hold names what is left running`, () => {
+    if (!parser) return; // without a parser every Stop is done, see above
+    const task = (type, status = 'running') => ({ ...(type ? { type } : {}), status });
+    const held = (tasks) => run('Stop', stopPayload(tasks), PATH);
+    fs.writeFileSync(path.join(STATUS, '.shell-keeps-working'), '');
+    try {
+      assert.equal(held([task('shell'), task('shell', 'pending')]), 'working\nshell', 'nothing but commands');
+      assert.equal(held([task('shell'), task('subagent')]), 'working\nbackground', 'real work outranks a command');
+      assert.equal(held([task('workflow'), task('shell')]), 'working\nbackground', 'in either order');
+      assert.equal(held([task('shell', 'completed'), task('monitor', 'in_progress')]), 'working\nbackground');
+      assert.equal(held([task('shell', 'completed')]), 'stop', 'a finished command holds nothing');
+      assert.equal(held([task(undefined)]), 'working\nbackground', 'no type: an older Claude Code, counts as work');
+      assert.equal(held([{ type: 'shell', state: 'running' }]), 'working\nshell', 'state instead of status');
+    } finally {
+      fs.unlinkSync(path.join(STATUS, '.shell-keeps-working'));
+    }
+    // Setting off: a command never holds, with or without company.
+    assert.equal(held([task('shell'), task('shell')]), 'stop');
+    assert.equal(held([task('shell'), task('subagent')]), 'working\nbackground');
+    assert.equal(run('Stop', 'not json at all', PATH), 'stop', 'a payload nobody can read is a plain done');
   });
 
   test(`[${name}] a turn that died on Claude's side writes error plus the reason`, () => {

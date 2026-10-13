@@ -689,3 +689,101 @@ test('without the status field a ⚠️ waits for its hook as before', async () 
   await hook('working'); // the tool call ends, PostToolUse reports it
   assert.match(title, /💬/);
 });
+
+// --- a background command that outlives the turn -------------------------------
+
+// With shellTasksKeepWorking on, the Stop hook holds the marker for a shell
+// task too and says so ('working' plus 'shell'). Radar cannot tell a build
+// from a server, so that hold gets a marker of its own and no clock: a 💬
+// counting minutes over a preview server claimed work nobody was doing.
+// Measured against Claude Code 2.1.296: the session goes idle while the
+// command runs, and its end wakes the session with a prompt of its own.
+
+test('a turn that leaves only a command running shows ⏳ and no clock', async () => {
+  startSession();
+  await hook('prompt');
+  try {
+    later(9);
+    minuteTick();
+    assert.equal(title, '💬 9m ');
+
+    await hook('working\nshell'); // the turn is over, the server is still up
+    assert.equal(title, '⏳ ', 'something runs, nobody works');
+    assert.equal(banners.length, 0, 'a hold never rings');
+    later(30);
+    minuteTick();
+    assert.equal(title, '⏳ ', 'and it does not start counting later either');
+
+    setStatus('idle'); // as measured: the session is idle while the command runs
+    sweepTick();
+    assert.equal(title, '⏳ ', 'that idle is expected, the command holds the marker');
+
+    await hook('prompt'); // the command ends and wakes the session
+    assert.equal(title, '💬 ', 'Claude is at it again, with a fresh clock');
+    appendAssistant('Fertig.');
+    await hook('stop');
+    assert.match(title, /🟢/);
+  } finally {
+    backToNow();
+    startSession();
+  }
+});
+
+test('real work in the background keeps 💬 and its clock', async () => {
+  startSession();
+  await hook('prompt');
+  try {
+    later(9);
+    await hook('working\nbackground'); // an agent or a workflow is still at it
+    assert.equal(title, '💬 9m ');
+  } finally {
+    backToNow();
+  }
+});
+
+test('the command marker shows no agent count', async () => {
+  // The hook says nothing but a command is left. A transcript that still
+  // looks alive is a leftover then, and must not put a 🤖 next to the ⏳.
+  startSession();
+  await hook('prompt');
+  startAgent();
+  try {
+    await hook('working\nshell');
+    sweepTick();
+    assert.equal(title, '⏳ ');
+  } finally {
+    endAgents();
+  }
+});
+
+test('the command marker respects its setting, empty hides it', async () => {
+  startSession();
+  await hook('prompt');
+  try {
+    settings['claudeRadar.markerShellTask'] = '🧵';
+    await hook('working\nshell');
+    assert.equal(title, '🧵 ');
+    settings['claudeRadar.markerShellTask'] = '';
+    await hook('working\nshell');
+    assert.equal(title, '');
+  } finally {
+    delete settings['claudeRadar.markerShellTask'];
+  }
+});
+
+test('a prompt answered during a command hold goes back to 💬, not to ⏳', async () => {
+  setStatus('busy');
+  await hook('prompt');
+  await hook('working\nshell');
+  assert.equal(title, '⏳ ');
+  try {
+    setStatus('waiting', Date.now(), { waitingFor: 'permission prompt' });
+    sweepTick(); // no hook reported it, the registry does
+    assert.match(title, /⚠️/);
+    setStatus('busy');
+    sweepTick();
+    assert.equal(title, '💬 ', 'the session works again, so it is Claude, not just the command');
+  } finally {
+    startSession();
+  }
+});

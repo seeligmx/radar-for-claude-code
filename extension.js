@@ -83,13 +83,21 @@ const writeMarker = (label) => `${MARKER_F}; printf '%s' "${label}" ${WRITE_F}`;
 // that this 'working' is held on purpose and not mistake the idle for a turn
 // that ended without a Stop. An extension older than the hook ignores the
 // line, check() only reads the first one for the label.
-const ACTIVE_JQ = `((.status // .state) as $s | $s=="running" or $s=="in_progress" or $s=="pending") and ($a=="1" or .type != "shell")`;
-const ACTIVE_PY = `import sys,json,os;d=json.load(sys.stdin);ts=d.get("background_tasks") or [];print("Y" if any((t.get("status") or t.get("state")) in ("running","in_progress","pending") and (os.environ.get("A")=="1" or t.get("type")!="shell") for t in ts) else "N")`;
+//
+// The line says 'shell' instead when nothing but shell tasks is left (only
+// possible with the setting on). Radar cannot tell a build that is about to
+// finish from a server that never will, and a 💬 counting minutes over a
+// server claims work nobody is doing. So that hold gets a marker of its own,
+// without a clock (see setMarker). Verified live against Claude Code 2.1.296:
+// a background command shows up as type 'shell', status 'running', and the
+// session itself goes idle while it runs.
+const HELD_JQ = `[(.background_tasks // [])[]? | select((.status // .state) as $s | $s=="running" or $s=="in_progress" or $s=="pending")] | if any(.[]; .type != "shell") then "background" elif $a=="1" and length>0 then "shell" else "" end`;
+const HELD_PY = `import sys,json,os;d=json.load(sys.stdin);ts=[t for t in (d.get("background_tasks") or []) if (t.get("status") or t.get("state")) in ("running","in_progress","pending")];print("background" if any(t.get("type")!="shell" for t in ts) else "shell" if ts and os.environ.get("A")=="1" else "")`;
 const stopMarker =
-  `${MARKER_F}; in="$(cat)"; lbl=stop; a=0; [ -f "$d/.shell-keeps-working" ] && a=1; ` +
-  `if command -v jq >/dev/null 2>&1; then printf '%s' "$in" | jq -e --arg a "$a" 'any((.background_tasks // [])[]?; ${ACTIVE_JQ})' >/dev/null 2>&1 && lbl=working; ` +
-  `elif command -v python3 >/dev/null 2>&1; then printf '%s' "$in" | A="$a" python3 -c '${ACTIVE_PY}' 2>/dev/null | grep -q Y && lbl=working; fi; ` +
-  `if [ "$lbl" = working ]; then printf 'working\\nbackground'; else printf '%s' "$lbl"; fi ${WRITE_F}`;
+  `${MARKER_F}; in="$(cat)"; h=""; a=0; [ -f "$d/.shell-keeps-working" ] && a=1; ` +
+  `if command -v jq >/dev/null 2>&1; then h="$(printf '%s' "$in" | jq -r --arg a "$a" '${HELD_JQ}' 2>/dev/null)"; ` +
+  `elif command -v python3 >/dev/null 2>&1; then h="$(printf '%s' "$in" | A="$a" python3 -c '${HELD_PY}' 2>/dev/null)"; fi; ` +
+  `case "$h" in background|shell) printf 'working\\n%s' "$h";; *) printf stop;; esac ${WRITE_F}`;
 
 // The turn died on Claude's side: a spend limit, a 529, an expired session, a
 // connection lost mid-response. Claude Code ends it with StopFailure instead
@@ -229,6 +237,9 @@ function markerFile() {
 // Epoch ms of the transition into 'working'; null outside of it. Feeds the
 // opt-in elapsed time in the marker (💬 14m).
 let workingSince = null;
+// True while 'working' is held for nothing but a background shell command
+// (the Stop hook says so). Shown with a marker of its own and no clock.
+let shellHold = false;
 
 // Live count of running subagents (💬 14m 🤖8). Claude Code keeps one
 // transcript per subagent under ~/.claude/projects/<slug>/<session>/subagents/
@@ -619,19 +630,21 @@ function setMarker(label) {
   let marker = '';
   if (label) {
     const cfg = vscode.workspace.getConfiguration('claudeRadar');
+    const held = label === 'working' && shellHold;
     const symbol = (
       label === 'waiting' ? cfg.get('markerWaiting', '⚠️')
+      : held ? cfg.get('markerShellTask', '⏳')
       : label === 'working' ? cfg.get('markerWorking', '💬')
       : label === 'error' ? cfg.get('markerError', '🔴')
       : cfg.get('markerDone', '🟢')
     ).trim();
     let time = '';
-    if (label === 'working' && workingSince && cfg.get('showWorkingTime', true)) {
+    if (label === 'working' && !held && workingSince && cfg.get('showWorkingTime', true)) {
       const t = elapsedLabel(workingSince);
       if (t) time = ' ' + t;
     }
     let agents = '';
-    if (label === 'working' && agentCount > 0) {
+    if (label === 'working' && !held && agentCount > 0) {
       const agentSymbol = cfg.get('markerAgents', '🤖').trim();
       if (agentSymbol) agents = ' ' + agentSymbol + agentCount;
     }
@@ -1057,6 +1070,7 @@ async function activate(context) {
     currentLabel = null;
     workingSince = null;
     backgroundWork = false;
+    shellHold = false;
     agentCount = 0;
     lastToolFailed = false;
     sawInterrupt = false;
@@ -1122,6 +1136,7 @@ async function activate(context) {
     // starts over, as it does when a hook reports the next tool call.
     if (currentLabel === 'waiting' && workResumed(sessions, waitingSince)) {
       currentLabel = 'working';
+      shellHold = false;
       workingSince = Date.now();
       updateAgentCount();
       setMarker('working');
@@ -1200,7 +1215,9 @@ async function activate(context) {
       // background work; the per-tool-call repeats and a prompt say nothing,
       // and either one means the session is awake again.
       const why = label === 'error' ? shortReason(reason) : '';
-      const heldForBackground = label === 'working' && reason === 'background';
+      // 'shell' is the same hold with nothing but a background command left.
+      shellHold = label === 'working' && reason === 'shell';
+      const heldForBackground = shellHold || (label === 'working' && reason === 'background');
       // The Stop hook can't know whether the turn ended on a failed tool call,
       // so the transcript decides between done and failed. Scanning here and
       // not just on the tick matters: Stop lands milliseconds after the last
@@ -1290,7 +1307,8 @@ async function activate(context) {
       // not on the next tick
       if (
         (e.affectsConfiguration('claudeRadar.showWorkingTime') ||
-          e.affectsConfiguration('claudeRadar.markerAgents')) &&
+          e.affectsConfiguration('claudeRadar.markerAgents') ||
+          e.affectsConfiguration('claudeRadar.markerShellTask')) &&
         currentLabel === 'working'
       )
         setMarker('working');
