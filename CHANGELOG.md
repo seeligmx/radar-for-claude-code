@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0 - 2026-10-13
+
+- **Feature:** A background command that outlives the turn shows ⏳ instead of a working clock. Opt-in: `claudeRadar.shellTasksKeepWorking`.
+- **Fixed:** Esc no longer empties the title while background agents are still working: 💬 and the 🤖 count stay until they're through.
+- **Fixed:** An agent you stopped leaves the 🤖 count right away instead of lingering for ten minutes.
+- **Fixed:** A ⚠️ answered without opening its window (from your phone or a terminal) goes back to 💬 within 10 seconds, instead of standing until the running command is through.
+
 ## 1.3.0 - 2026-09-16
 
 - **Feature:** Radar reads the status Claude Code writes for each session (Claude Code 2.1.269 or newer). A 💬 left standing after the turn ended goes within 10 seconds, hooks or not. A permission prompt or dialog no hook reported shows ⚠️, and the banner says which: "Needs you: permission prompt".

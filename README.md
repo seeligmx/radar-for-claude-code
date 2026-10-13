@@ -11,77 +11,53 @@
 
 ![The native tab bar as a live status board: working, needs you, done](media/radar-demo.gif)
 
-**Claude Code multitasking, done right.** Run Claude across several projects and always know which one needs you, without clicking through window after window.
+**Claude Code multitasking, done right.** Run Claude across a handful of projects and know at a glance which one needs you. No clicking through windows to check.
 
-## Four features, one glance
+## What you get
 
-- **Live status in every window title.** 💬 working, ⚠️ needs you, 🟢 done, 🔴 the turn failed. Every project, one look. A question Claude typed counts as ⚠️ too, so it doesn't sit unanswered behind a green marker.
-- **Live agent count.** Claude fans out into subagents for a big review or a workflow? The title counts them while they run: `💬 14m 🤖8`.
-- **Markers that clean up after themselves.** Interrupted with `Esc`, Claude quit, terminal closed? The marker goes, instead of claiming work that stopped ten minutes ago. Hit a spend limit or a 529 in a background window? You get told, instead of watching 💬 count minutes in which nothing can happen.
-- **macOS banners and sounds.** A background window pings you when it needs you or finishes, one click jumps right in. The window you're looking at stays quiet.
+- **Status in every window title.** 💬 working, ⚠️ needs you, 🟢 done, 🔴 failed. A question Claude typed counts as ⚠️, so it never hides behind a green marker.
+- **Live agent count.** Claude fans out into subagents or a workflow? The title counts them while they run: `💬 14m 🤖8`.
+- **Markers that don't lie.** `Esc`, a closed terminal, a spend limit, a 529: the marker follows within seconds instead of counting minutes nobody is working.
+- **Banners and sounds.** A background window pings you when it needs you or finishes. One click takes you there. The window you're looking at stays quiet.
+
+## Get started
+
+**macOS only** · VS Code ≥ 1.93 · Claude Code ≥ 2.1.247, best with 2.1.269 or newer
+
+Install it, and Radar walks you through two steps on first launch. Both are required, no marker shows without them:
+
+1. **Add the status to your window title.**
+2. **Install the Claude hooks.** They go into `~/.claude/settings.json`, with a backup. Your own hooks stay untouched.
+
+Restart any Claude session that is already running, and you're set. Updates keep the hooks current.
+
+Optional: `terminal-notifier` (Homebrew) makes the banners clickable. Radar offers to install it. Uninstalling? Run **Remove Claude hooks** from the Command Palette first.
 
 ## Tips
 
-- **Native tabs are the killer setup.** Set `"window.nativeTabs": true` in your settings and restart: every window packs into one tab bar, a live status board for all your Claudes. Already have windows open? **Window → Merge All Windows** pulls them all into one bar. (Radar works without native tabs too: title bar, window switcher, Mission Control.)
-- **Switch projects without the mouse.** Bind `workbench.action.showPreviousWindowTab` and `showNextWindowTab` to keys you like (`⌘←` / `⌘→` work nicely), and step straight to the Claude that needs you. Without native tabs, `` ⌘` `` cycles through the windows.
-- **Presenting?** Run **Mute banners for 1 hour** from the Command Palette, sounds pause too and the markers keep working. For quiet by default, empty `claudeRadar.soundWaiting` / `soundDone` or turn `claudeRadar.banner` off.
+- **Native tabs are the killer setup.** Set `"window.nativeTabs": true` and restart: every window joins one tab bar, a live status board for all your Claudes. **Window → Merge All Windows** pulls open windows in.
+- **Switch without the mouse.** Bind `workbench.action.showPreviousWindowTab` and `showNextWindowTab` (`⌘←` / `⌘→` work nicely) and step straight to the Claude that needs you.
+- **Presenting?** Run **Mute banners for 1 hour** from the Command Palette. The markers keep working.
+- **Long scripts in the background?** Turn on `claudeRadar.shellTasksKeepWorking`. A command that outlives the turn then holds ⏳ instead of showing done.
 
-## Requirements
+## Privacy and performance
 
-- VS Code ≥ 1.93 · Claude Code ≥ 2.1.247 · **macOS only**
-- `terminal-notifier` (Homebrew) makes banners clickable; without it you still get notification + sound
-
-## Setup
-
-Radar offers to set itself up on first launch and keeps reminding you until it's done: **both steps are required, no marker shows without them.** If `terminal-notifier` is missing, it offers the Homebrew install too. Or do it via the Command Palette: **Add ${claudeRadarStatus} to window.title**, then **Install Claude hooks** (writes to `~/.claude/settings.json`, backup first, other hooks stay put). Claude loads hooks at session start, so restart any session that's already running. Updates keep the hooks current automatically. Uninstalling? Run **Remove Claude hooks** first, then uninstall.
-
-## Privacy, performance & trust
-
-- **No network, no telemetry.** Everything happens in local files.
-- **Event-driven, not polling.** Idle cost is effectively zero. One exception: while a marker is on display, a light scan runs every 10 s (agent count, and whether a Claude is still alive here). With an empty title, the normal state, nothing runs at all.
-- **No latency for Claude.** The hook after every tool call runs async, so Claude never waits for Radar; the other hooks fire once per turn.
-- **Safe config writes.** Atomic, with a backup. Removal is one command.
-- **Open source.** [Full code on GitHub](https://github.com/seeligmx/radar-for-claude-code).
+- **No network, no telemetry.** Everything stays in local files.
+- **Event-driven.** With an empty title nothing runs at all. While a marker shows, a light check runs every 10 s.
+- **Claude never waits for Radar.** The hook after each tool call runs async.
+- **Open source.** [Read the code on GitHub](https://github.com/seeligmx/radar-for-claude-code).
 
 ## How it works
 
-Eight Claude hooks drop a file in `~/.claude/tab-status/`, named `sha256(project path)` (first 16 hex chars, realpath-resolved so symlinks match). The content is the status:
+Claude Code hooks write the current status to a small file per project in `~/.claude/tab-status/`. Each window watches its own file and puts the marker into its title. While a marker shows, Radar checks it against Claude Code's own session registry and transcripts. That is how it notices what no hook reports: an `Esc`, a session that died, a prompt you answered from your phone.
 
-- `UserPromptSubmit` → `prompt` (shows `working`, purely visual, no banner/sound; its own label so a new prompt restarts the elapsed-time clock)
-- `Notification` / `PermissionRequest` → `waiting`
-- `PreToolUse` + `AskUserQuestion` → `waiting` (a question needs you too; its own hook, since AskUserQuestion fires neither Stop nor Notification)
-- `PostToolUse` / `PostToolUseFailure` → `working` (every completed tool call flips back to working, failed ones too, since Claude reads the error and carries on; so an answered question or a granted permission doesn't leave the title empty while Claude keeps going)
-- `Stop` → `stop` (done, or ⚠️ when the turn ends by asking you something, or 🔴 when its last tool call failed), unless background work is still running, then `working` stays. Subagents, workflows, and monitors count as work (they finish and wake the session); background shell tasks don't, since a dev server Claude started would otherwise hold the working marker forever. Want shell tasks to count? Turn on `claudeRadar.shellTasksKeepWorking`.
-- `StopFailure` → `error` (🔴, the turn died on Claude's side: a spend limit, a 529, an expired session, a connection lost mid-response. The banner names the cause, so you know whether to retry or to go fix something.)
+## Good to know
 
-Each window watches only its own file and shows the marker from **state + focus**:
-
-- `working` stays visible the whole time, even in the active window, never with banner/sound, so nothing flickers.
-- `needs you` / `done` show a persistent marker and banner only when the window's in the background (banner via `terminal-notifier`, a click focuses the right window). In the active window they flash for ~1 s ("peek") and fade.
-- Focusing a window clears an attention marker; `working` stays, since Claude's still going.
-
-While `working` shows, Radar also counts the subagents running in this project: Claude Code keeps one transcript file per agent under `~/.claude/projects/`, and an agent counts as running until its transcript ends on its final answer (checked every 10 s, read-only). One that has been silent for ten minutes counts as gone, whatever its transcript says. That's the 🤖8 in the title.
-
-While a marker is on display, Radar also verifies it. Claude Code lists every running session in `~/.claude/sessions/<pid>.json` with its working directory; if no live process belongs to this project any more, the marker was lying and goes. The same pass reads the tail of the session transcript, which records two things no hook reports:
-
-- An `Esc` interrupt. The marker goes, deliberately without a "done" marker, since nothing finished.
-- A failed tool call. Only the turn's *last* tool result counts for 🔴, so a failure Claude recovered from in the same turn still ends green. Measured across 1464 real turns, that marks 2 % of them.
-
-Since Claude Code 2.1.269 the same registry entry also carries the session's own status, and the sweep reads that too. Every session of the project idle since your prompt means the turn ended without a `Stop`, and the marker goes. A session waiting for a permission or a dialog shows ⚠️, banner included, whether or not a hook reported it. This is a backstop for the hooks, not a replacement: a hook reports the moment it happens, the sweep within 10 s.
-
-Stale files (sessions with no matching window) are cleaned up after 24 h.
-
-## Limits
-
-- The marker is text (emoji) in the title, not a native tab badge, macOS doesn't allow those.
-- `Stop` fires after every response. Fine for the marker and banner (idempotent, one banner per project, focused windows skipped).
-- Interrupting Claude with `Esc` still fires no hook Radar can use, so the marker clears on the next sweep (within 10 s) rather than instantly.
-- Marker verification needs `~/.claude/sessions/`, which older Claude Code versions don't write, and the status backstop needs the status field in it (Claude Code 2.1.269). Without them Radar leaves every marker alone, exactly as before.
-- 🔴 means the turn failed: either its last tool call failed, or Claude's side died on it. A task Claude explains it can't do ends green, since nothing technically failed.
-- Question detection reads the last non-empty line of Claude's closing text. A question phrased mid-paragraph, or one without a question mark, ends green. Measured across 7528 real turn endings, 3 % close on a question.
-- The agent count reads the transcripts: an agent killed together with its session leaves no final answer behind and stays in the count for up to ten minutes. Agents running in Anthropic's cloud leave no local transcripts and aren't counted.
+- The marker is emoji text in the title. macOS doesn't allow native tab badges.
+- An `Esc` shows up within 10 s, not instantly: Claude Code fires no hook for it.
+- 🔴 means the turn failed technically. A task Claude says it can't do still ends green.
+- Agents running in Anthropic's cloud aren't counted.
 - Multi-root workspaces: the first folder wins.
-- Two events at once: the later one wins.
 
 ## Settings
 
@@ -89,16 +65,17 @@ Give just the symbol, the space is added for you. Empty means no marker for that
 
 | Setting | Default | |
 | --- | --- | --- |
-| `claudeRadar.markerWorking` | `💬` | while Claude is working |
-| `claudeRadar.showWorkingTime` | `true` | show the elapsed time in the working marker (`💬 14m`) |
-| `claudeRadar.markerAgents` | `🤖` | prefix for the count of running subagents (`💬 14m 🤖8`); empty hides the count |
-| `claudeRadar.markerWaiting` | `⚠️` | when Claude needs you |
-| `claudeRadar.markerDone` | `🟢` | when Claude is done |
-| `claudeRadar.markerError` | `🔴` | when the turn failed (last tool call, or Claude's side died) |
+| `claudeRadar.markerWorking` | `💬` | Claude is working |
+| `claudeRadar.showWorkingTime` | `true` | elapsed time next to it (`💬 14m`) |
+| `claudeRadar.markerAgents` | `🤖` | prefix for the subagent count (`🤖8`); empty hides it |
+| `claudeRadar.markerWaiting` | `⚠️` | Claude needs you |
+| `claudeRadar.markerDone` | `🟢` | Claude is done |
+| `claudeRadar.markerError` | `🔴` | the turn failed |
 | `claudeRadar.detectQuestions` | `true` | a turn ending in a question counts as ⚠️, not 🟢 |
-| `claudeRadar.banner` | `true` | macOS banner on/off |
-| `claudeRadar.minDoneSeconds` | `0` | only banner "done" when the turn ran this long (⚠️ and 🔴 always notify) |
-| `claudeRadar.soundWaiting` | `Basso` | sound when needs you (empty = silent) |
-| `claudeRadar.soundDone` | `Glass` | sound when done (empty = silent) |
-| `claudeRadar.soundError` | `Basso` | sound when a turn failed |
-| `claudeRadar.shellTasksKeepWorking` | `false` | background shell tasks (e.g. a dev server) keep the working marker |
+| `claudeRadar.banner` | `true` | macOS banners on/off |
+| `claudeRadar.minDoneSeconds` | `0` | banner "done" only when the turn ran this long |
+| `claudeRadar.soundWaiting` | `Basso` | sound for needs you (empty = silent) |
+| `claudeRadar.soundDone` | `Glass` | sound for done (empty = silent) |
+| `claudeRadar.soundError` | `Basso` | sound for a failed turn |
+| `claudeRadar.shellTasksKeepWorking` | `false` | a background command that outlives the turn holds a marker instead of done |
+| `claudeRadar.markerShellTask` | `⏳` | that marker |
