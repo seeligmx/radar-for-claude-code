@@ -1,7 +1,7 @@
 // The agent counter (💬 14m 🤖8) reads the subagent transcripts: an agent whose
-// transcript ends on its final answer is done, anything else is mid-work, and
-// one silent for ten minutes is gone whatever it says. The fixtures mirror the
-// line shapes measured in real transcripts.
+// transcript ends on its final answer or on the interrupt line is done,
+// anything else is mid-work, and one silent for ten minutes is gone whatever
+// it says. The fixtures mirror the line shapes measured in real transcripts.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -52,6 +52,15 @@ const STRUCTURED_RESULT = line({
   toolEndsTurn: true,
   message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] },
 });
+// A stopped agent: Esc took it down with its turn, or it was stopped on its
+// own from the panel. Mid-tool it gets the rejected call first, then the
+// interrupt line; mid-answer the interrupt line alone.
+const REJECTED_CALL = line({
+  type: 'user',
+  message: { role: 'user', content: [{ type: 'tool_result', is_error: true, content: 'The user doesn\'t want to proceed with this tool use.' }] },
+});
+const interrupted = (suffix = '') =>
+  line({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `[Request interrupted by user${suffix}]` }] } });
 
 let n = 0;
 function agent(dir, ...lines) {
@@ -101,14 +110,46 @@ test('an agent resumed with a follow-up counts again', () => {
 });
 
 test('silent for ten minutes means gone, whatever the transcript says', () => {
-  // The fallback for agents killed with Esc or with their session: they never
-  // write a final answer, so without this they would count forever.
+  // The fallback for agents that died with their session: they never write
+  // an ending of any kind, so without this they would count forever.
   clear();
   const f = agent(SUB, WAITING_FOR_TOOL);
   age(f, 9);
   assert.equal(countActiveAgents(), 1, 'nine minutes of thinking is still work');
   age(f, 11);
   assert.equal(countActiveAgents(), 0);
+});
+
+test('a stopped agent is done, mid-tool and mid-answer', () => {
+  // Without this an agent stopped with Esc stayed in the count for ten
+  // minutes, on a title that had long moved on to the next prompt.
+  clear();
+  const tool = agent(SUB, WAITING_FOR_TOOL, REJECTED_CALL, interrupted(' for tool use'));
+  const answer = agent(WF, WAITING_FOR_MODEL, interrupted());
+  assert.equal(finished(tool), true);
+  assert.equal(finished(answer), true);
+  assert.equal(countActiveAgents(), 0);
+});
+
+test('the interrupt wording inside tool output keeps the agent counted', () => {
+  // An agent that greps a transcript reads the phrase as tool output. Only
+  // the interrupt's own text block ends it.
+  clear();
+  const f = agent(
+    SUB,
+    WAITING_FOR_TOOL,
+    line({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'x.jsonl:[Request interrupted by user]' }] } })
+  );
+  assert.equal(finished(f), false);
+  assert.equal(countActiveAgents(), 1);
+});
+
+test('a stopped agent that is sent on counts again', () => {
+  clear();
+  const f = agent(SUB, WAITING_FOR_TOOL, REJECTED_CALL, interrupted(' for tool use'));
+  assert.equal(countActiveAgents(), 0);
+  fs.appendFileSync(f, WAITING_FOR_TOOL);
+  assert.equal(countActiveAgents(), 1);
 });
 
 test('a half-written last line does not decide', () => {

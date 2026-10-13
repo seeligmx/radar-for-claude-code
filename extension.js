@@ -239,7 +239,11 @@ let workingSince = null;
 // (a tool_use waiting for its result, a result waiting for the model) is an
 // agent mid-work. Measured over 77 finished transcripts: 73 end on
 // toolEndsTurn, 4 on end_turn, none on anything else, and toolEndsTurn never
-// shows up before the last line. Read-only polling instead of SubagentStop:
+// shows up before the last line. A stopped agent is done as well, and its
+// transcript closes on the interrupt line: taken down by Esc together with
+// its turn, mid-tool or mid-answer, or stopped on its own from the panel
+// (verified live against Claude Code 2.1.296 on five agents stopped in
+// these ways). Read-only polling instead of SubagentStop:
 // a hook event can be missed (Esc, kill) and would leave the count stuck.
 // The mtime window is only the fallback for exactly those agents: killed with
 // their session, they leave a mid-work transcript behind that would count
@@ -256,6 +260,14 @@ function agentTranscriptRoot() {
   const p = projectRoot();
   return p ? path.join(PROJECTS_DIR, slugFor(p)) : undefined;
 }
+
+// The content block Claude Code writes when a run is stopped, in a session's
+// transcript and in a subagent's alike. Checking the structure matters: the
+// same words show up inside tool output whenever anyone greps for them, so a
+// plain substring scan would fire on that. Verified against the real
+// transcripts: the interrupt is always its own text block on a user line.
+const isInterruptBlock = (b) =>
+  !!b && b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('[Request interrupted by user');
 
 // Does the transcript's last complete line say the agent is done? Reads only
 // the tail. Undecidable cases (a last line longer than the tail, not JSON, an
@@ -285,7 +297,11 @@ function agentFinished(file, size) {
     return false;
   }
   if (!d || typeof d !== 'object') return false;
-  if (d.type === 'user') return d.toolEndsTurn === true;
+  if (d.type === 'user') {
+    if (d.toolEndsTurn === true) return true;
+    const content = d.message && d.message.content;
+    return Array.isArray(content) && content.some(isInterruptBlock);
+  }
   return d.type === 'assistant' && !!d.message && d.message.stop_reason === 'end_turn';
 }
 
@@ -508,13 +524,7 @@ function scanTranscriptLine(line) {
   if (d.type !== 'user') return;
   for (const b of content) {
     if (!b || typeof b !== 'object') continue;
-    // Checking the structure matters: the same words show up inside tool
-    // output whenever anyone greps for them, so a plain substring scan would
-    // fire on that. Verified against the real transcripts: the interrupt is
-    // always its own text block on a user line.
-    if (b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('[Request interrupted by user')) {
-      sawInterrupt = true;
-    }
+    if (isInterruptBlock(b)) sawInterrupt = true;
     if (b.type === 'tool_result') lastToolFailed = b.is_error === true;
   }
 }
@@ -1064,8 +1074,20 @@ async function activate(context) {
     }
     scanTranscripts(sessions);
     if (sawInterrupt) {
-      clearState(); // resets sawInterrupt
-      return true;
+      sawInterrupt = false;
+      // Esc ends the turn, not necessarily the work. Since Claude Code 2.1.286
+      // the VS Code panel leaves background agents running on Stop and Esc
+      // (verified live against 2.1.296: the agent worked on for 43 s after
+      // the interrupt, and no hook fired in all that time). They are what the
+      // marker stands for then, so it stays while one is still at it. An
+      // agent that went down with the turn closes its transcript on the
+      // interrupt line and does not count (see agentFinished). Nothing extra
+      // is needed to end this: an agent that finishes or gets stopped wakes
+      // the session with a prompt of its own, and that turn's hooks take over.
+      if (currentLabel !== 'working' || countActiveAgents() === 0) {
+        clearState();
+        return true;
+      }
     }
     // The registry's verdict only matters against a 'working' marker: the
     // attention labels came from a hook that knew better, or have already

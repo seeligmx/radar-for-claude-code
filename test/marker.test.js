@@ -5,6 +5,7 @@
 // This is the regression net for 1.1.2. Covered: a dead session and an Esc
 // interrupt clear the marker, an absent session registry must NOT, and a turn
 // that ended on a failed tool call shows the error marker instead of done.
+// Since then: an Esc that leaves background agents running keeps the marker.
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
@@ -487,5 +488,81 @@ test('in the focused window the API error peeks instead of ringing', async () =>
     assert.equal(title, '', 'the peek expires');
   } finally {
     focused = false;
+  }
+});
+
+// --- Esc while agents work in the background ---------------------------------
+
+// Since Claude Code 2.1.286 the VS Code panel's Stop and Esc end the turn and
+// nothing else: background agents work on, and the session stays busy in the
+// registry while they do. Measured live against 2.1.296.
+const AGENTS = path.join(path.dirname(transcript), SESSION_ID, 'subagents');
+const agentFile = path.join(AGENTS, 'agent-a0000000000000001.jsonl');
+const startAgent = () => {
+  fs.mkdirSync(AGENTS, { recursive: true });
+  fs.writeFileSync(
+    agentFile,
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash' }], stop_reason: 'tool_use' } }) + '\n'
+  );
+};
+const endAgents = () => fs.rmSync(AGENTS, { recursive: true, force: true });
+
+test('an Esc interrupt keeps the marker while a background agent works on', async () => {
+  setStatus('busy');
+  await hook('prompt');
+  startAgent();
+  appendInterrupt();
+  try {
+    sweepTick();
+    assert.match(title, /💬/, 'the turn is over, the work is not');
+    assert.match(title, /🤖1/);
+    sweepTick();
+    assert.match(title, /💬/, 'one interrupt is not held against the ticks that follow');
+
+    // The agent finishes and wakes the session: a prompt of its own, then Stop.
+    fs.appendFileSync(
+      agentFile,
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' } }) + '\n'
+    );
+    await hook('prompt');
+    appendAssistant('Der Agent ist durch.');
+    await hook('stop');
+    assert.match(title, /🟢/, 'the woken turn ends it the usual way');
+  } finally {
+    endAgents();
+    startSession();
+  }
+});
+
+test('an Esc interrupt that took its agent down clears the marker', async () => {
+  // A foreground agent goes with the turn, and its transcript says so.
+  startSession();
+  await hook('prompt');
+  startAgent();
+  fs.appendFileSync(agentFile, userLine([{ type: 'text', text: '[Request interrupted by user for tool use]' }]));
+  appendInterrupt();
+  try {
+    sweepTick();
+    assert.equal(title, '', 'nobody is left working');
+  } finally {
+    endAgents();
+  }
+});
+
+test('an idle session ends the marker even when a transcript still looks alive', async () => {
+  // An agent that died without a last line leaves a mid-work transcript
+  // behind. The session knows better: idle since the interrupt means nothing
+  // is running, so the marker must not wait out the ten-minute fallback.
+  startSession();
+  await hook('prompt');
+  startAgent();
+  appendInterrupt();
+  setStatus('idle');
+  try {
+    sweepTick();
+    assert.equal(title, '');
+  } finally {
+    endAgents();
+    startSession();
   }
 });
