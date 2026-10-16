@@ -254,7 +254,12 @@ let shellHold = false;
 // transcript closes on the interrupt line: taken down by Esc together with
 // its turn, mid-tool or mid-answer, or stopped on its own from the panel
 // (verified live against Claude Code 2.1.296 on five agents stopped in
-// these ways). Read-only polling instead of SubagentStop:
+// these ways). Bookkeeping can follow the last word: attachment lines such
+// as a snapshot of the whole system prompt (2 to 111 KB, half of them
+// longer than the first tail read). Measured over 991 transcripts: 12
+// finished agents end that way, 3 from 2.1.278, 9 from 2.1.299 on.
+// Attachment lines say nothing about progress and are stepped over.
+// Read-only polling instead of SubagentStop:
 // a hook event can be missed (Esc, kill) and would leave the count stuck.
 // The mtime window is only the fallback for exactly those agents: killed with
 // their session, they leave a mid-work transcript behind that would count
@@ -264,6 +269,7 @@ let shellHold = false;
 const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 const AGENT_STALE_MS = 10 * 60000;
 const AGENT_TAIL_BYTES = 64 * 1024;
+const AGENT_TAIL_MAX_BYTES = 512 * 1024;
 const AGENT_POLL_MS = 10000;
 let agentCount = 0;
 
@@ -280,13 +286,21 @@ function agentTranscriptRoot() {
 const isInterruptBlock = (b) =>
   !!b && b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('[Request interrupted by user');
 
-// Does the transcript's last complete line say the agent is done? Reads only
-// the tail. Undecidable cases (a last line longer than the tail, not JSON, an
-// empty file) answer false: the agent then stays in the count until the mtime
-// fallback lets it go.
+// Does the transcript's last word say the agent is done? Reads only the tail,
+// and a wider one when the first ends inside a line. Undecidable cases (a line
+// longer than the wider tail, not JSON, an empty file) answer false: the agent
+// then stays in the count until the mtime fallback lets it go.
 function agentFinished(file, size) {
   if (size === 0) return false;
-  const len = Math.min(size, AGENT_TAIL_BYTES);
+  const verdict = tailVerdict(file, size, Math.min(size, AGENT_TAIL_BYTES));
+  if (verdict !== undefined || size <= AGENT_TAIL_BYTES) return verdict === true;
+  return tailVerdict(file, size, Math.min(size, AGENT_TAIL_MAX_BYTES)) === true;
+}
+
+// The last complete line that is not an attachment, read from the last len
+// bytes: true or false once decided, undefined when that line began before
+// the tail.
+function tailVerdict(file, size, len) {
   const buf = Buffer.allocUnsafe(len);
   const fd = fs.openSync(file, 'r');
   try {
@@ -294,26 +308,32 @@ function agentFinished(file, size) {
   } finally {
     fs.closeSync(fd);
   }
-  // The last complete line: Claude may be mid-write, so a tail without its
-  // newline is skipped, and so are blank lines.
+  // Claude may be mid-write, so a tail without its newline is skipped, and so
+  // are blank lines.
   let end = buf.lastIndexOf(0x0a);
-  while (end > 0 && buf[end - 1] === 0x0a) end--;
-  if (end <= 0) return false;
-  const start = buf.lastIndexOf(0x0a, end - 1) + 1;
-  if (start === 0 && len < size) return false; // began before the tail: undecidable
-  let d;
-  try {
-    d = JSON.parse(buf.subarray(start, end).toString('utf8'));
-  } catch {
-    return false;
+  for (;;) {
+    while (end > 0 && buf[end - 1] === 0x0a) end--;
+    if (end <= 0) return len < size ? undefined : false;
+    const start = buf.lastIndexOf(0x0a, end - 1) + 1;
+    if (start === 0 && len < size) return undefined;
+    let d;
+    try {
+      d = JSON.parse(buf.subarray(start, end).toString('utf8'));
+    } catch {
+      return false;
+    }
+    if (!d || typeof d !== 'object') return false;
+    if (d.type === 'attachment') {
+      end = start - 1;
+      continue;
+    }
+    if (d.type === 'user') {
+      if (d.toolEndsTurn === true) return true;
+      const content = d.message && d.message.content;
+      return Array.isArray(content) && content.some(isInterruptBlock);
+    }
+    return d.type === 'assistant' && !!d.message && d.message.stop_reason === 'end_turn';
   }
-  if (!d || typeof d !== 'object') return false;
-  if (d.type === 'user') {
-    if (d.toolEndsTurn === true) return true;
-    const content = d.message && d.message.content;
-    return Array.isArray(content) && content.some(isInterruptBlock);
-  }
-  return d.type === 'assistant' && !!d.message && d.message.stop_reason === 'end_turn';
 }
 
 function countActiveAgents() {

@@ -61,6 +61,10 @@ const REJECTED_CALL = line({
 });
 const interrupted = (suffix = '') =>
   line({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `[Request interrupted by user${suffix}]` }] } });
+// Bookkeeping after the last word: a snapshot of the whole system prompt,
+// measured at 2 to 111 KB.
+const snapshot = (kb) =>
+  line({ type: 'attachment', attachment: { type: 'prompt_snapshot', systemPrompt: ['x'.repeat(kb * 1024)] } });
 
 let n = 0;
 function agent(dir, ...lines) {
@@ -168,14 +172,43 @@ test('blank lines at the end are skipped', () => {
   assert.equal(countActiveAgents(), 0);
 });
 
-test('a last line longer than the tail read keeps the agent counted', () => {
-  // Undecidable answers "not finished"; the mtime fallback lets it go later.
+test('a prompt snapshot after the last word is stepped over', () => {
+  // Without this a one-round agent stayed in the count for ten minutes, and
+  // after Esc it held 💬 over a project where nothing ran any more.
   clear();
-  const huge = line({
-    type: 'assistant',
-    message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(70 * 1024) }], stop_reason: 'end_turn' },
-  });
-  agent(SUB, WAITING_FOR_TOOL, huge);
+  const answer = agent(SUB, WAITING_FOR_MODEL, FINAL_ANSWER, snapshot(2));
+  const structured = agent(WF, WAITING_FOR_TOOL, STRUCTURED_RESULT, snapshot(2), snapshot(2));
+  assert.equal(finished(answer), true);
+  assert.equal(finished(structured), true);
+  agent(SUB, WAITING_FOR_TOOL, snapshot(2));
+  assert.equal(countActiveAgents(), 1, 'the snapshot does not end a mid-work agent either');
+});
+
+test('a snapshot longer than the first tail read is stepped over too', () => {
+  clear();
+  agent(SUB, WAITING_FOR_TOOL, FINAL_ANSWER, snapshot(111));
+  agent(WF, WAITING_FOR_TOOL, STRUCTURED_RESULT, snapshot(70));
+  assert.equal(countActiveAgents(), 0);
+});
+
+test('a transcript of nothing but attachments is not finished', () => {
+  clear();
+  const f = agent(SUB, snapshot(2));
+  assert.equal(finished(f), false);
+});
+
+test('a long last line is read with the wider tail', () => {
+  clear();
+  const long = (kb) =>
+    line({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(kb * 1024) }], stop_reason: 'end_turn' },
+    });
+  const f = agent(SUB, WAITING_FOR_TOOL, long(70));
+  assert.equal(finished(f), true);
+  // Longer than the wider tail is undecidable: "not finished", and the mtime
+  // fallback lets it go later.
+  agent(SUB, WAITING_FOR_TOOL, long(600));
   assert.equal(countActiveAgents(), 1);
 });
 
