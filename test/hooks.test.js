@@ -73,7 +73,6 @@ for (const [name, PATH] of Object.entries(PATHS)) {
 
   test(`[${name}] every fixed-label hook writes its label`, () => {
     const fixed = [
-      ['UserPromptSubmit', 'prompt'],
       ['Notification', 'waiting'],
       ['PermissionRequest', 'waiting'],
       ['PreToolUse', 'waiting'],
@@ -81,6 +80,19 @@ for (const [name, PATH] of Object.entries(PATHS)) {
       ['PostToolUseFailure', 'working'], // Claude reads the error and carries on
     ];
     for (const [event, label] of fixed) assert.equal(run(event, '{}', PATH), label, event);
+  });
+
+  test(`[${name}] a prompt the session sent itself says so`, () => {
+    // The openings as measured against Claude Code 2.1.299, see WAKE_PREFIXES.
+    const prompt = (p) => run('UserPromptSubmit', JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: p }), PATH);
+    const wake = parser ? 'prompt\nwake' : 'prompt';
+    assert.equal(prompt('<task-notification>\n<task-id>b611qeled</task-id>'), wake, 'a background command ended');
+    assert.equal(prompt('<agent-message from="a12f3c37fdcb5bda2">\n[Subagent hand-back]'), wake, 'an agent handed back');
+    assert.equal(prompt('Another Claude session sent a message:\n<agent-message from="a1">'), wake, 'as the transcript words it');
+    assert.equal(prompt('Bau mir das bitte'), 'prompt');
+    assert.equal(prompt('Was heißt <task-notification> hier?'), 'prompt', 'typed text that mentions it');
+    assert.equal(run('UserPromptSubmit', '{}', PATH), 'prompt');
+    assert.equal(run('UserPromptSubmit', 'not json at all', PATH), 'prompt');
   });
 
   test(`[${name}] Stop: done, unless background work is still running`, () => {

@@ -718,7 +718,7 @@ test('a turn that leaves only a command running shows ⏳ and no clock', async (
     sweepTick();
     assert.equal(title, '⏳ ', 'that idle is expected, the command holds the marker');
 
-    await hook('prompt'); // the command ends and wakes the session
+    await hook('prompt\nwake'); // the command ends and wakes the session
     assert.equal(title, '💬 ', 'Claude is at it again, with a fresh clock');
     appendAssistant('Fertig.');
     await hook('stop');
@@ -738,6 +738,37 @@ test('real work in the background keeps 💬 and its clock', async () => {
     assert.equal(title, '💬 9m ');
   } finally {
     backToNow();
+  }
+});
+
+// Each piece of background work that ends wakes the session with a prompt of
+// its own. Seen live against Claude Code 2.1.301: one run, four wake-ups in
+// its first 24 minutes, and the clock started over at every one of them.
+
+test('a wake-up from background work keeps the clock of its run', async () => {
+  startSession();
+  await hook('prompt');
+  try {
+    later(6);
+    await hook('working\nbackground');
+    await hook('prompt\nwake'); // a command ends while the agent works on
+    assert.equal(title, '💬 6m ', 'the same run, the same clock');
+    await hook('working\nbackground');
+    later(9);
+    await hook('prompt\nwake'); // the agent hands back
+    appendAssistant('Fertig.');
+    await hook('stop');
+    assert.match(bannerText(), /Done after 9m/, 'the banner reports the whole run');
+
+    await hook('prompt\nwake'); // woken after the done: a new stretch
+    assert.equal(title, '💬 ');
+    later(12);
+    await hook('working\nbackground');
+    await hook('prompt'); // typed: your new ask starts its own clock
+    assert.equal(title, '💬 ');
+  } finally {
+    backToNow();
+    startSession();
   }
 });
 

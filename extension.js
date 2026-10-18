@@ -112,6 +112,23 @@ const stopFailureMarker =
   `elif command -v python3 >/dev/null 2>&1; then r="$(printf '%s' "$in" | python3 -c '${REASON_PY}' 2>/dev/null)"; fi; ` +
   `printf 'error\\n%s' "$r" ${WRITE_F}`;
 
+// Background work that finishes wakes the session with a prompt of its own,
+// and that fires UserPromptSubmit like a typed one. The hook tells them apart
+// by the opening of .prompt and adds 'wake' on a second line, so the clock of
+// the run they belong to keeps going (see check()). Measured against Claude
+// Code 2.1.299: an ended command sends <task-notification>, an agent's
+// hand-back <agent-message from="...">. The transcript shows the hand-back
+// behind "Another Claude session sent a message:", the hook got it without;
+// both count. An extension older than the hook reads a plain 'prompt'.
+const WAKE_PREFIXES = ['<task-notification>', '<agent-message ', 'Another Claude session sent a message:'];
+const WAKE_JQ = `(.prompt // "") as $p | if any(${JSON.stringify(WAKE_PREFIXES)}[]; . as $w | $p | startswith($w)) then "wake" else "" end`;
+const WAKE_PY = `import sys,json;p=json.load(sys.stdin).get("prompt") or "";print("wake" if p.startswith(tuple(${JSON.stringify(WAKE_PREFIXES)})) else "")`;
+const promptMarker =
+  `${MARKER_F}; w=""; ` +
+  `if command -v jq >/dev/null 2>&1; then w="$(jq -r '${WAKE_JQ}' 2>/dev/null)"; ` +
+  `elif command -v python3 >/dev/null 2>&1; then w="$(python3 -c '${WAKE_PY}' 2>/dev/null)"; fi; ` +
+  `case "$w" in wake) printf 'prompt\\nwake';; *) printf prompt;; esac ${WRITE_F}`;
+
 const HOOK_SPECS = [
   // A new prompt shows 'working' like every other event, but with a fresh
   // clock: its own label separates "you just sent something" from the
@@ -120,8 +137,9 @@ const HOOK_SPECS = [
   // turn - Esc fires no hook at all (verified against Claude Code 2.1.209:
   // no Stop, no Notification, nothing), so the old 'working' from the
   // aborted turn survived into the next one and the title showed minutes
-  // that had never been worked.
-  { event: 'UserPromptSubmit', matcher: '', command: writeMarker('prompt') }, // working, clock restarted (no banner/sound)
+  // that had never been worked. A wake-up from background work says so and
+  // keeps the clock (see promptMarker).
+  { event: 'UserPromptSubmit', matcher: '', command: promptMarker }, // working, clock restarted unless woken (no banner/sound)
   // Notification fires for more than "needs you": the matcher filters on
   // .notification_type, so list the types that actually wait for the user.
   // Without it, auth_success, elicitation_complete/-response and
@@ -1232,9 +1250,14 @@ async function activate(context) {
       // Only the StopFailure hook brings a reason. A failed last tool call
       // (below) has none; its banner just says "Failed". The Stop hook's
       // 'working' says 'background' there when it holds the marker for
-      // background work; the per-tool-call repeats and a prompt say nothing,
-      // and either one means the session is awake again.
+      // background work; the per-tool-call repeats say nothing, a prompt says
+      // 'wake' when background work sent it, and either one means the session
+      // is awake again.
       const why = label === 'error' ? shortReason(reason) : '';
+      // A wake-up belongs to the run that started the background work, so a
+      // 💬 held for that work keeps its clock. After ⏳ the clock starts over:
+      // the hold showed no time, and a command running is not Claude working.
+      const wake = label === 'prompt' && reason === 'wake' && currentLabel === 'working' && !shellHold && !!workingSince;
       // 'shell' is the same hold with nothing but a background command left.
       shellHold = label === 'working' && reason === 'shell';
       const heldForBackground = shellHold || (label === 'working' && reason === 'background');
@@ -1263,13 +1286,13 @@ async function activate(context) {
       const ranFor = (label === 'stop' || label === 'error') && workingSince ? elapsedLabel(workingSince) : '';
       const ranMs = workingSince ? Date.now() - workingSince : 0;
       // The elapsed time counts from your last prompt: 'prompt' (re)starts
-      // the clock unconditionally, the frequent PostToolUse 'working'
-      // repeats only start it when it isn't running, and every other event
-      // stops it. Unconditional here is what fixes an interrupted turn:
-      // Esc fires no hook, so the clock keeps running until the next prompt
-      // - which is exactly this branch.
+      // the clock unless it is a wake-up (above), the frequent PostToolUse
+      // 'working' repeats only start it when it isn't running, and every
+      // other event stops it. Restarting here is what fixes an interrupted
+      // turn: Esc fires no hook, so the clock keeps running until the next
+      // prompt - which is exactly this branch.
       if (label === 'prompt') {
-        workingSince = Date.now();
+        if (!wake) workingSince = Date.now();
         label = 'working';
         // A new prompt starts a clean turn: whatever failed in the previous
         // one must not colour this one's ending red.
