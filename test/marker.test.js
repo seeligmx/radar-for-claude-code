@@ -27,6 +27,12 @@ os.homedir = () => HOME;
 
 let title = null; // whatever setContext last wrote: the visible marker
 let focused = false;
+const focusListeners = [];
+// Bring the window to the front or leave it, the way VS Code reports it.
+const setFocus = (value) => {
+  focused = value;
+  for (const fn of focusListeners) fn({ focused: value });
+};
 const settings = {};
 
 const vscode = {
@@ -46,7 +52,10 @@ const vscode = {
     get state() {
       return { focused };
     },
-    onDidChangeWindowState: () => ({ dispose() {} }),
+    onDidChangeWindowState: (fn) => {
+      focusListeners.push(fn);
+      return { dispose() {} };
+    },
     showInformationMessage: async () => undefined,
     showWarningMessage: async () => undefined,
   },
@@ -1095,5 +1104,166 @@ test('a single session goes from ⚠️ back to 💬 with its next tool call, as
   mine('busy');
   await hook('working');
   assert.match(title, /💬/);
+  startSession();
+});
+
+// --- what is left once a marker has been seen --------------------------------
+
+// Looking at the window acknowledges ⚠️, 🟢 and 🔴. What happens after that is
+// not for a hook to say: nothing fires when a prompt is answered, and nothing
+// when you look away again while another session works on.
+
+test('a ⚠️ you looked at turns into 💬 once its prompt is answered', async () => {
+  // Seen live: the prompt stood for 24 s, the allowed command then ran for
+  // 40 s, and the tab stayed empty until it was through.
+  mine('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  mine('waiting', Date.now(), { waitingFor: 'permission prompt' });
+  await hook('waiting');
+  assert.match(title, /⚠️/);
+  try {
+    setFocus(true); // you look, the prompt is still open
+    assert.equal(title, '');
+    sweepTick();
+    assert.equal(title, '', 'nothing to show while it waits for you');
+
+    mine('busy'); // allowed
+    sweepTick();
+    assert.match(title, /💬/, 'the command runs, and the title says so');
+    setFocus(false);
+    assert.match(title, /💬/);
+  } finally {
+    setFocus(false);
+    startSession();
+  }
+});
+
+test('a prompt that comes up while you watch does the same', async () => {
+  mine('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  setFocus(true);
+  try {
+    mine('waiting', Date.now(), { waitingFor: 'permission prompt' });
+    await hook('waiting');
+    assert.match(title, /⚠️/, 'a peek');
+    await sleep(1100);
+    assert.equal(title, '');
+
+    mine('busy'); // allowed
+    sweepTick();
+    assert.match(title, /💬/);
+  } finally {
+    setFocus(false);
+    startSession();
+  }
+});
+
+test('a prompt that was dismissed leaves the title empty, and the check ends', async () => {
+  mine('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  mine('waiting', Date.now(), { waitingFor: 'permission prompt' });
+  await hook('waiting');
+  try {
+    setFocus(true);
+    mine('idle'); // Esc on the prompt: the turn is over
+    sweepTick();
+    assert.equal(title, '');
+    mine('busy'); // whatever comes later is for its own hooks to report
+    sweepTick();
+    assert.equal(title, '', 'the check is not waiting for an answer any more');
+  } finally {
+    setFocus(false);
+    startSession();
+  }
+});
+
+test('one session done leaves the clock to the one that works on', async () => {
+  fs.writeFileSync(otherTranscript, '');
+  mine('busy');
+  other('idle');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  try {
+    later(5);
+    other('busy');
+    await hook(`prompt\n\n${OTHER_ID}`);
+    assert.equal(title, '💬 5m ', 'a prompt next door does not restart the clock');
+
+    later(20);
+    appendAssistant('Fertig.');
+    mine('idle');
+    await hook(`stop\n${SESSION_ID}`);
+    assert.match(title, /🟢/);
+    assert.match(bannerText(), /Done after 20m/);
+
+    await hook('working'); // the neighbour's next tool call
+    assert.equal(title, '💬 20m ', 'the project has been busy all along');
+
+    later(30);
+    otherSays('Fertig.');
+    other('idle');
+    await hook(`stop\n${OTHER_ID}`);
+    assert.match(bannerText(), /Done after 25m/, 'the banner reports the turn that ended, not the project');
+
+    await hook(`prompt\n\n${SESSION_ID}`);
+    assert.equal(title, '💬 ', 'nobody else at work: your prompt starts the clock');
+  } finally {
+    backToNow();
+    oneSessionAgain();
+  }
+});
+
+test('a done you looked at gives the title back to the session that works on', async () => {
+  await twoSessions();
+  try {
+    appendAssistant('Fertig.');
+    mine('idle');
+    await hook(`stop\n${SESSION_ID}`);
+    assert.match(title, /🟢/);
+    setFocus(true);
+    assert.match(title, /💬/, 'seen, and the neighbour is still at it');
+    setFocus(false);
+    assert.match(title, /💬/);
+
+    // The same while you watch: a peek, then 💬 again.
+    await hook(`prompt\n\n${SESSION_ID}`);
+    setFocus(true);
+    appendAssistant('Fertig.');
+    await hook(`stop\n${SESSION_ID}`);
+    assert.match(title, /🟢/);
+    await sleep(1100);
+    assert.match(title, /💬/);
+  } finally {
+    setFocus(false);
+    oneSessionAgain();
+  }
+});
+
+test('with the neighbour gone quiet, a done you looked at leaves nothing behind', async () => {
+  await twoSessions();
+  try {
+    appendAssistant('Fertig.');
+    mine('idle');
+    await hook(`stop\n${SESSION_ID}`);
+    assert.match(title, /🟢/);
+    other('idle'); // its turn ended without a Stop
+    sweepTick();
+    assert.match(title, /🟢/, 'your done still stands');
+    setFocus(true);
+    assert.equal(title, '');
+  } finally {
+    setFocus(false);
+    oneSessionAgain();
+  }
+});
+
+test('one session alone: a done you looked at leaves the title empty, as before', async () => {
+  mine('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  appendAssistant('Fertig.');
+  await hook(`stop\n${SESSION_ID}`); // the registry still says busy: the Stop hooks have not all returned
+  assert.match(title, /🟢/);
+  setFocus(true);
+  assert.equal(title, '', 'the session that stopped is not "someone else at work"');
+  setFocus(false);
   startSession();
 });

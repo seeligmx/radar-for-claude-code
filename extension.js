@@ -1206,6 +1206,13 @@ async function activate(context) {
   // Sessions that closed their turn on a question and have not been prompted
   // since, by session id. Their ⚠️ is still owed an answer (see stillAsking).
   const asking = new Set();
+  // When each session's running turn began, by session id. The clock in the
+  // title is the project's (see check()); the done banner reports the turn
+  // of the session that ended.
+  const turnStarts = new Map();
+  // Set when a ⚠️ was seen while its prompt was still open: the time it first
+  // showed. The check then goes on until that prompt is answered (see resume).
+  let awaiting = 0;
   // When the last prompt arrived, typed or sent by background work that
   // ended. The clock can be older than that: a wake-up keeps it (see check()).
   let promptAt = 0;
@@ -1226,7 +1233,27 @@ async function activate(context) {
     turnMemory.clear();
     turnOver = false;
     asking.clear();
+    turnStarts.clear();
+    awaiting = 0;
     return setMarker(null);
+  };
+
+  // Is a session other than this one at work, as far as the registry says?
+  const othersAtWork = (sessions, sid) => !!sessions && sessions.some((s) => s.status === 'busy' && s.sessionId !== sid);
+
+  // What is left once an attention marker has been seen. Usually nothing. A
+  // clock that is still running means another session works on (see check()),
+  // and then 💬 comes back with it instead of an empty title.
+  const settle = () => {
+    asking.clear();
+    turnOver = false;
+    if (workingSince) {
+      currentLabel = 'working';
+      setMarker('working');
+    } else {
+      currentLabel = null;
+      setMarker(null);
+    }
   };
 
   // Is the ⚠️ on display still owed an answer? Either a session closed on a
@@ -1260,11 +1287,12 @@ async function activate(context) {
     if (label === 'waiting' && currentLabel !== 'waiting') waitingSince = Date.now();
     currentLabel = label;
     if (vscode.window.state.focused) {
+      if (label === 'waiting' && !over) awaiting = waitingSince;
       currentLabel = null; // counts as seen
       asking.clear();
       setMarker(label);
       peekTimer = setTimeout(() => {
-        if (vscode.window.state.focused) setMarker(null);
+        if (vscode.window.state.focused) settle();
       }, PEEK_MS);
       return;
     }
@@ -1361,7 +1389,32 @@ async function activate(context) {
         return true;
       }
     }
+    // A clock kept running under an attention marker stands for a session
+    // that works on. Once none does, there is nothing to come back to.
+    if (currentLabel !== 'working' && workingSince && !sessions.some((s) => s.status === 'busy')) workingSince = null;
     return false;
+  };
+
+  // A ⚠️ that was seen while its prompt was still open. No hook fires when a
+  // prompt is answered; the next one comes when the tool call that waited
+  // for it is through, minutes later for a build, and until then the title
+  // stayed empty. The registry records the answer (see workResumed), so the
+  // check goes on until it shows the session back at work, or no prompt open.
+  const resume = () => {
+    const root = projectRoot();
+    const sessions = root ? liveSessionsHere(root) : undefined;
+    if (!sessions || sessions.length === 0) {
+      awaiting = 0;
+    } else if (workResumed(sessions, awaiting)) {
+      awaiting = 0;
+      currentLabel = 'working';
+      shellHold = false;
+      workingSince = Date.now();
+      updateAgentCount();
+      setMarker('working');
+    } else if (!sessions.some((s) => s.status === 'waiting')) {
+      awaiting = 0; // answered and through already, dismissed, or a registry without the status
+    }
   };
 
   // Refresh the elapsed time once a minute while 'working' is shown; a no-op
@@ -1376,7 +1429,10 @@ async function activate(context) {
   // idle window still costs nothing. The sweep goes first - once the marker is
   // gone there is no agent count left to refresh.
   const watchTick = setInterval(() => {
-    if (!currentLabel) return;
+    if (!currentLabel) {
+      if (awaiting) resume();
+      return;
+    }
     if (sweep()) return;
     if (currentLabel === 'working' && updateAgentCount()) setMarker('working');
   }, AGENT_POLL_MS);
@@ -1421,6 +1477,7 @@ async function activate(context) {
         }
       }
       if (!LABELS.includes(label)) label = 'stop'; // unexpected content -> treat as done
+      awaiting = 0; // whatever was pending, this event says where things stand
       // Stop and StopFailure end a turn, whatever marker comes of it below.
       const turnEnded = label === 'stop' || label === 'error';
       // Only the StopFailure hook brings a reason. A failed last tool call
@@ -1441,10 +1498,15 @@ async function activate(context) {
       // so the transcript decides between done and failed. Scanning here and
       // not just on the tick matters: Stop lands milliseconds after the last
       // tool result, long before the next tick would have seen it.
+      // The clock in the title is the project's. With several sessions in it,
+      // one of them ending or being prompted does not stop or restart it while
+      // another is at work; it then says how long the project has been busy.
+      let clockStays = false;
       if (label === 'stop') {
         const root = projectRoot();
         const sessions = root ? liveSessionsHere(root) : undefined;
         if (sessions && sessions.length > 0) scanTranscripts(sessions, promptAt);
+        clockStays = !!sid && othersAtWork(sessions, sid);
         // Where the hook named the session that stopped, its own transcript
         // decides and nobody else's: with two sessions in a project, a clean
         // ending showed 🔴 because the neighbour's last tool call had failed.
@@ -1463,8 +1525,13 @@ async function activate(context) {
       // How long the run took, read before the state below clears it: the
       // done banner reports it, which is the first thing you want to know
       // when one pops up after you've been away. Empty below a minute.
-      const ranFor = (label === 'stop' || label === 'error') && workingSince ? elapsedLabel(workingSince) : '';
-      const ranMs = workingSince ? Date.now() - workingSince : 0;
+      // Where the clock is older than this session's own prompt, it was kept
+      // for a neighbour, and the banner reports this session's turn.
+      const own = sid ? turnStarts.get(sid) : undefined;
+      const started = workingSince && own && own > workingSince ? own : workingSince;
+      const ranFor = (label === 'stop' || label === 'error') && started ? elapsedLabel(started) : '';
+      const ranMs = started ? Date.now() - started : 0;
+      if (turnEnded) turnStarts.delete(sid);
       // The elapsed time counts from your last prompt: 'prompt' (re)starts
       // the clock unless it is a wake-up (above), the frequent PostToolUse
       // 'working' repeats only start it when it isn't running, and every
@@ -1473,7 +1540,11 @@ async function activate(context) {
       // prompt - which is exactly this branch.
       if (label === 'prompt') {
         promptAt = Date.now();
-        if (!wake) workingSince = promptAt;
+        if (!wake) {
+          if (sid) turnStarts.set(sid, promptAt);
+          const root = sid && currentLabel === 'working' && workingSince ? projectRoot() : undefined;
+          if (!root || !othersAtWork(liveSessionsHere(root), sid)) workingSince = promptAt;
+        }
         label = 'working';
         // A new prompt starts a clean turn: whatever failed in the previous
         // one must not colour this one's ending red. Where the hook named the
@@ -1487,7 +1558,7 @@ async function activate(context) {
       } else if (label === 'working') {
         if (!workingSince) workingSince = Date.now();
       } else {
-        workingSince = null;
+        if (!clockStays) workingSince = null;
         backgroundWork = false;
       }
       const wasWorking = currentLabel === 'working';
@@ -1556,13 +1627,15 @@ async function activate(context) {
         if (currentLabel === 'working') {
           setMarker('working');
         } else {
-          setMarker(null);
-          currentLabel = null;
-          asking.clear();
+          if (currentLabel === 'waiting' && !turnOver) awaiting = waitingSince;
+          settle();
         }
-      } else {
-        // Unfocusing: show the current state (working persists, acknowledged ones null).
+      } else if (currentLabel) {
+        // Unfocusing: show the current state (working persists).
         setMarker(currentLabel);
+      } else {
+        // Nothing unseen is left; a peek cut short by leaving ends here.
+        settle();
       }
     }),
     vscode.commands.registerCommand('claudeRadar.clear', () => {
