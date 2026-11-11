@@ -1087,6 +1087,10 @@ test('a closing question keeps its ⚠️ until that session is prompted again',
     await hook(`prompt\n\n${OTHER_ID}`); // even a prompt over there
     assert.match(title, /⚠️/);
 
+    other('busy'); // stamped after the question: work starting next door
+    sweepTick();
+    assert.match(title, /⚠️/, 'is no answer to it either');
+
     await hook(`prompt\n\n${SESSION_ID}`); // the answer
     assert.match(title, /💬/);
   } finally {

@@ -1329,7 +1329,7 @@ async function activate(context) {
         if (mem.interrupt) interrupted.add(id);
         mem.interrupt = false;
       }
-      const othersAtWork = sessions.some((s) => s.status === 'busy' && !interrupted.has(s.sessionId));
+      const someoneElseAtWork = sessions.some((s) => s.status === 'busy' && !interrupted.has(s.sessionId));
       // Esc ends the turn, not necessarily the work. Since Claude Code 2.1.286
       // the VS Code panel leaves background agents running on Stop and Esc
       // (verified live against 2.1.296: the agent worked on for 43 s after
@@ -1340,7 +1340,7 @@ async function activate(context) {
       // is needed to end this: an agent that finishes or gets stopped wakes
       // the session with a prompt of its own, and that turn's hooks take over.
       if (currentLabel === 'working') {
-        if (countActiveAgents() === 0 && !othersAtWork) {
+        if (countActiveAgents() === 0 && !someoneElseAtWork) {
           clearState();
           return true;
         }
@@ -1357,8 +1357,11 @@ async function activate(context) {
     }
     // A ⚠️ whose prompt has been answered goes back to 💬: Claude is working
     // again, and no hook will say so before the tool call ends. The clock
-    // starts over, as it does when a hook reports the next tool call.
-    if (currentLabel === 'waiting' && workResumed(sessions, waitingSince)) {
+    // starts over, as it does when a hook reports the next tool call. Only a
+    // prompt that was open can be answered that way. A question that closed
+    // a turn is answered by prompting its session, which the hook reports,
+    // and work starting next door says nothing about it.
+    if (currentLabel === 'waiting' && !turnOver && asking.size === 0 && workResumed(sessions, waitingSince)) {
       currentLabel = 'working';
       shellHold = false;
       workingSince = Date.now();
