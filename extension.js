@@ -1203,6 +1203,9 @@ async function activate(context) {
   // done, failed, or a closing question. A ⚠️ for a permission or a dialog
   // belongs to a turn that is still open.
   let turnOver = false;
+  // Sessions that closed their turn on a question and have not been prompted
+  // since, by session id. Their ⚠️ is still owed an answer (see stillAsking).
+  const asking = new Set();
   // When the last prompt arrived, typed or sent by background work that
   // ended. The clock can be older than that: a wake-up keeps it (see check()).
   let promptAt = 0;
@@ -1222,7 +1225,21 @@ async function activate(context) {
     lastAssistantText = '';
     turnMemory.clear();
     turnOver = false;
+    asking.clear();
     return setMarker(null);
+  };
+
+  // Is the ⚠️ on display still owed an answer? Either a session closed on a
+  // question and has not been prompted since, or the registry shows one
+  // waiting at a prompt. While that holds, ⚠️ outranks whatever else happens
+  // in the project: with several sessions there, and with agents working next
+  // to a permission prompt, a tool call somewhere else used to put 💬 over
+  // it, and a neighbour's done 🟢.
+  const stillAsking = () => {
+    if (asking.size > 0) return true;
+    const root = projectRoot();
+    const sessions = root ? liveSessionsHere(root) : undefined;
+    return !!sessions && sessions.some((s) => s.status === 'waiting');
   };
 
   // waiting/stop/error are attention events. In the focused window, "peek":
@@ -1244,6 +1261,7 @@ async function activate(context) {
     currentLabel = label;
     if (vscode.window.state.focused) {
       currentLabel = null; // counts as seen
+      asking.clear();
       setMarker(label);
       peekTimer = setTimeout(() => {
         if (vscode.window.state.focused) setMarker(null);
@@ -1269,6 +1287,10 @@ async function activate(context) {
       return true;
     }
     scanTranscripts(sessions, promptAt);
+    // A session that is gone asks nothing any more.
+    for (const id of asking) {
+      if (!sessions.some((s) => s.sessionId === id)) asking.delete(id);
+    }
     if (sawInterrupt) {
       sawInterrupt = false;
       // Whose turn it was. With several sessions in the project, one that is
@@ -1433,6 +1455,7 @@ async function activate(context) {
         // "answer me" is the more accurate instruction than "look at this".
         if (vscode.workspace.getConfiguration('claudeRadar').get('detectQuestions', true) && endsWithQuestion(closing)) {
           label = 'waiting';
+          if (sid) asking.add(sid);
         } else if (failed) {
           label = 'error';
         }
@@ -1460,6 +1483,7 @@ async function activate(context) {
         lastAssistantText = '';
         if (sid) turnMemory.delete(sid);
         else turnMemory.clear();
+        asking.delete(sid); // prompted again: its question is answered
       } else if (label === 'working') {
         if (!workingSince) workingSince = Date.now();
       } else {
@@ -1471,6 +1495,7 @@ async function activate(context) {
       // window), never with banner/sound -> no flicker on focus changes
       // while Claude is working.
       if (label === 'working') {
+        if (currentLabel === 'waiting' && stillAsking()) return; // ⚠️ stands, see stillAsking
         currentLabel = 'working';
         backgroundWork = heldForBackground;
         clearTimeout(peekTimer); // a running peek must never overwrite a new event
@@ -1479,6 +1504,12 @@ async function activate(context) {
         // check() has to stay cheap.
         if (!wasWorking) updateAgentCount();
         setMarker('working');
+        return;
+      }
+      // Another session is done or has failed while the ⚠️ is still owed its
+      // answer: that rings, and the title keeps saying that someone needs you.
+      if (currentLabel === 'waiting' && label !== 'waiting' && stillAsking()) {
+        notify(label, ranFor, ranMs, why);
         return;
       }
       showAttention(label, ranFor, ranMs, why, turnEnded);
@@ -1527,6 +1558,7 @@ async function activate(context) {
         } else {
           setMarker(null);
           currentLabel = null;
+          asking.clear();
         }
       } else {
         // Unfocusing: show the current state (working persists, acknowledged ones null).

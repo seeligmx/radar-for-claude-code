@@ -1041,3 +1041,59 @@ test('an Esc elsewhere takes down neither a done marker nor a prompt that is sti
     oneSessionAgain();
   }
 });
+
+test('a prompt that is still open keeps its ⚠️ while a neighbour works on', async () => {
+  await twoSessions();
+  try {
+    mine('waiting', Date.now(), { waitingFor: 'permission prompt' });
+    await hook('waiting');
+    assert.match(title, /⚠️/);
+    await hook('working'); // a tool call over there
+    assert.match(title, /⚠️/, 'somebody still needs you');
+    assert.equal(banners.length, 0);
+
+    otherSays('Fertig.');
+    other('idle');
+    await hook(`stop\n${OTHER_ID}`); // the neighbour is done
+    assert.match(title, /⚠️/, 'done over there does not answer the prompt here');
+    assert.match(bannerText(), /Done/, 'but it rings');
+
+    mine('busy'); // answered
+    await hook('working');
+    assert.match(title, /💬/);
+  } finally {
+    oneSessionAgain();
+  }
+});
+
+test('a closing question keeps its ⚠️ until that session is prompted again', async () => {
+  await twoSessions();
+  try {
+    appendAssistant('Soll ich das so machen?');
+    mine('idle');
+    await hook(`stop\n${SESSION_ID}`);
+    assert.match(title, /⚠️/);
+    await hook('working'); // the neighbour's tool call
+    assert.match(title, /⚠️/, 'the question is still open');
+    await hook(`prompt\n\n${OTHER_ID}`); // even a prompt over there
+    assert.match(title, /⚠️/);
+
+    await hook(`prompt\n\n${SESSION_ID}`); // the answer
+    assert.match(title, /💬/);
+  } finally {
+    oneSessionAgain();
+  }
+});
+
+test('a single session goes from ⚠️ back to 💬 with its next tool call, as before', async () => {
+  // The registry no longer shows it waiting once the prompt is answered.
+  mine('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  mine('waiting', Date.now(), { waitingFor: 'permission prompt' });
+  await hook('waiting');
+  assert.match(title, /⚠️/);
+  mine('busy');
+  await hook('working');
+  assert.match(title, /💬/);
+  startSession();
+});
