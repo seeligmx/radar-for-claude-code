@@ -39,6 +39,7 @@ const TITLE_VAR = '${claudeRadarStatus}';
 const LABELS = ['prompt', 'working', 'waiting', 'stop', 'error'];
 const PEEK_MS = 1000; // focused window: show an attention marker briefly, then hide it
 const ECHO_MS = 10000; // a ⚠️ reported again this soon is the same prompt, not a new one
+const ASKED_GRACE_MS = 5000; // how long a session may still look busy after its closing question (its Stop hooks run)
 
 // One hook per event, each writes an event label into the marker file.
 // MARKER_F computes $f = this project's marker file path, identical to
@@ -1204,8 +1205,9 @@ async function activate(context) {
   // belongs to a turn that is still open.
   let turnOver = false;
   // Sessions that closed their turn on a question and have not been prompted
-  // since, by session id. Their ⚠️ is still owed an answer (see stillAsking).
-  const asking = new Set();
+  // since: session id and when it asked. Their ⚠️ is still owed an answer
+  // (see stillAsking).
+  const asking = new Map();
   // When each session's running turn began, by session id. The clock in the
   // title is the project's (see check()); the done banner reports the turn
   // of the session that ended.
@@ -1263,10 +1265,23 @@ async function activate(context) {
   // to a permission prompt, a tool call somewhere else used to put 💬 over
   // it, and a neighbour's done 🟢.
   const stillAsking = () => {
-    if (asking.size > 0) return true;
     const root = projectRoot();
     const sessions = root ? liveSessionsHere(root) : undefined;
-    return !!sessions && sessions.some((s) => s.status === 'waiting');
+    movedOn(sessions);
+    return asking.size > 0 || (!!sessions && sessions.some((s) => s.status === 'waiting'));
+  };
+
+  // A session that is at work again has moved on from its closing question: a
+  // Stop hook can send Claude back to work, and loops built on that do so
+  // after every turn. Its entry still says busy for the moment its Stop hooks
+  // take, hence the grace. True when one was dropped.
+  const movedOn = (sessions) => {
+    let dropped = false;
+    for (const [id, at] of asking) {
+      const s = sessions && sessions.find((x) => x.sessionId === id);
+      if (s && s.status === 'busy' && Date.now() - at > ASKED_GRACE_MS) dropped = asking.delete(id);
+    }
+    return dropped;
   };
 
   // waiting/stop/error are attention events. In the focused window, "peek":
@@ -1315,9 +1330,18 @@ async function activate(context) {
       return true;
     }
     scanTranscripts(sessions, promptAt);
-    // A session that is gone asks nothing any more.
-    for (const id of asking) {
+    // A session that is gone asks nothing any more, and neither does one that
+    // went back to work. If that leaves a ⚠️ nobody is owed, 💬 takes over.
+    for (const id of asking.keys()) {
       if (!sessions.some((s) => s.sessionId === id)) asking.delete(id);
+    }
+    if (movedOn(sessions) && asking.size === 0 && currentLabel === 'waiting' && turnOver && !sessions.some((s) => s.status === 'waiting')) {
+      currentLabel = 'working';
+      shellHold = false;
+      workingSince = Date.now();
+      updateAgentCount();
+      setMarker('working');
+      return true;
     }
     if (sawInterrupt) {
       sawInterrupt = false;
@@ -1510,6 +1534,7 @@ async function activate(context) {
         const sessions = root ? liveSessionsHere(root) : undefined;
         if (sessions && sessions.length > 0) scanTranscripts(sessions, promptAt);
         clockStays = !!sid && othersAtWork(sessions, sid);
+        asking.delete(sid); // however it ended before, this ending counts
         // Where the hook named the session that stopped, its own transcript
         // decides and nobody else's: with two sessions in a project, a clean
         // ending showed 🔴 because the neighbour's last tool call had failed.
@@ -1520,7 +1545,7 @@ async function activate(context) {
         // "answer me" is the more accurate instruction than "look at this".
         if (vscode.workspace.getConfiguration('claudeRadar').get('detectQuestions', true) && endsWithQuestion(closing)) {
           label = 'waiting';
-          if (sid) asking.add(sid);
+          if (sid) asking.set(sid, Date.now());
         } else if (failed) {
           label = 'error';
         }

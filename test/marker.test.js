@@ -1271,3 +1271,39 @@ test('one session alone: a done you looked at leaves the title empty, as before'
   setFocus(false);
   startSession();
 });
+
+test('a session sent back to work after its closing question gives the ⚠️ up', async () => {
+  // A Stop hook can refuse the ending and make Claude carry on; loops built on
+  // that do it after every turn. The question then is not waiting for anyone.
+  mine('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  try {
+    appendAssistant('Soll ich weitermachen?');
+    await hook(`stop\n${SESSION_ID}`); // the registry says busy: its Stop hooks are still running
+    assert.match(title, /⚠️/);
+    await hook('working'); // a tool call next door, within that moment
+    assert.match(title, /⚠️/, 'too early to tell');
+
+    later(1);
+    await hook('working'); // still busy a minute on: it was sent back to work
+    assert.match(title, /💬/);
+
+    backToNow();
+    appendAssistant('Und jetzt?');
+    await hook(`stop\n${SESSION_ID}`);
+    assert.match(title, /⚠️/);
+    later(1);
+    sweepTick(); // the same, noticed without any hook
+    assert.match(title, /💬/);
+
+    backToNow();
+    appendAssistant('Noch eine Frage?');
+    await hook(`stop\n${SESSION_ID}`);
+    appendAssistant('Fertig.');
+    await hook(`stop\n${SESSION_ID}`); // its next ending is the one that counts
+    assert.match(title, /🟢/);
+  } finally {
+    backToNow();
+    startSession();
+  }
+});
