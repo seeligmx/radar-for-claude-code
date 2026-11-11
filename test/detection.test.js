@@ -280,6 +280,116 @@ test('a missing transcript is skipped silently', () => {
   assert.doesNotThrow(() => scanTranscripts([{ cwd: '/work/ghost', sessionId: 'nope' }]));
 });
 
+// --- a transcript met for the first time ------------------------------------
+// Claude Code writes a session's transcript a moment after its first prompt
+// (median 146 ms over 472 sessions), so the window meets it during that turn.
+// What the turn wrote has to count, what came before it must not. Lines carry
+// the time they were written.
+
+const at = (ms) => new Date(ms).toISOString();
+const stamped = (line, ms) => JSON.stringify({ ...JSON.parse(line), timestamp: at(ms) });
+const assistantLine = (text) => JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } });
+const resetFlags = () => {
+  setInterrupt(false);
+  setFailed(false);
+  setText('');
+};
+
+test('the first turn of a new session is read, not just measured', () => {
+  const cwd = '/work/fresh';
+  const s = [{ cwd, sessionId: 'f1' }];
+  const file = transcriptFor(cwd, 'f1');
+  resetFlags();
+  const prompt = Date.now();
+  scanTranscripts(s, prompt); // the prompt is in, the transcript not yet written
+  fs.writeFileSync(
+    file,
+    stamped(JSON.stringify({ type: 'user', message: { role: 'user', content: 'Räum das auf' } }), prompt - 80) + '\n' +
+      stamped(resultLine(true), prompt + 900) + '\n' +
+      stamped(assistantLine('Welche Datei meinst du?'), prompt + 1500) + '\n'
+  );
+  scanTranscripts(s, prompt);
+  assert.equal(getText(), 'Welche Datei meinst du?', 'the closing words of a turn shorter than the tick');
+  assert.equal(getFailed(), true, 'and its failed tool call');
+
+  fs.appendFileSync(file, resultLine(false) + '\n');
+  scanTranscripts(s, prompt);
+  assert.equal(getFailed(), false, 'from then on it is followed line by line');
+});
+
+test('history in a transcript met for the first time stays out', () => {
+  // A resumed or forked session opens with the earlier conversation.
+  const cwd = '/work/forked';
+  const s = [{ cwd, sessionId: 'f2' }];
+  const file = transcriptFor(cwd, 'f2');
+  const prompt = Date.now();
+  const hourAgo = prompt - 3600000;
+  fs.writeFileSync(
+    file,
+    stamped(assistantLine('Soll ich weitermachen?'), hourAgo) + '\n' +
+      stamped(resultLine(true), hourAgo + 1000) + '\n' +
+      stamped(interruptLine(), hourAgo + 2000) + '\n' +
+      interruptLine() + '\n' + // no stamp at all: cannot be told from history
+      stamped(assistantLine('Erledigt.'), prompt + 2000) + '\n'
+  );
+  resetFlags();
+  scanTranscripts(s, prompt);
+  assert.equal(getInterrupt(), false, 'an Esc from an hour ago is not this turn\'s');
+  assert.equal(getFailed(), false, 'nor is its failed tool call');
+  assert.equal(getText(), 'Erledigt.', 'only what the turn wrote');
+});
+
+test('a transcript met long after the prompt is only measured', () => {
+  // Another session that shows up in the project while a long turn runs. Its
+  // recent lines are its own business, not the end of the turn on display.
+  const cwd = '/work/latecomer';
+  const s = [{ cwd, sessionId: 'f3' }];
+  const file = transcriptFor(cwd, 'f3');
+  const prompt = Date.now() - 60000;
+  fs.writeFileSync(file, stamped(interruptLine(), prompt + 30000) + '\n');
+  resetFlags();
+  scanTranscripts(s, prompt);
+  assert.equal(getInterrupt(), false);
+
+  fs.appendFileSync(file, stamped(interruptLine(), Date.now()) + '\n');
+  scanTranscripts(s, prompt);
+  assert.equal(getInterrupt(), true, 'what it writes from now on is followed');
+});
+
+test('a first read takes the end of a long transcript, never all of it', () => {
+  const cwd = '/work/long';
+  const s = [{ cwd, sessionId: 'f4' }];
+  const file = transcriptFor(cwd, 'f4');
+  const prompt = Date.now();
+  // Half a megabyte of earlier conversation, opening with an Esc of this very
+  // minute: it lies before the part that is read, so not even that counts.
+  const filler = stamped(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: 'y'.repeat(4000) }] } }), prompt - 7200000);
+  fs.writeFileSync(file, stamped(interruptLine(), prompt + 1) + '\n' + (filler + '\n').repeat(130) + stamped(assistantLine('Passt das so?'), prompt + 1200) + '\n');
+  assert.ok(fs.statSync(file).size > 500000);
+  resetFlags();
+  scanTranscripts(s, prompt);
+  assert.equal(getText(), 'Passt das so?');
+  assert.equal(getInterrupt(), false);
+  assert.equal(tailOffsets.get(file), fs.statSync(file).size, 'and the whole file counts as read');
+});
+
+test('a last line longer than the first read is skipped, not half-parsed', () => {
+  const cwd = '/work/huge';
+  const s = [{ cwd, sessionId: 'f5' }];
+  const file = transcriptFor(cwd, 'f5');
+  const prompt = Date.now();
+  // What a screenshot read into the conversation looks like.
+  const huge = stamped(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', is_error: true, content: 'z'.repeat(400000) }] } }), prompt + 500);
+  fs.writeFileSync(file, huge + '\n');
+  resetFlags();
+  assert.doesNotThrow(() => scanTranscripts(s, prompt));
+  assert.equal(getFailed(), false);
+
+  fs.appendFileSync(file, stamped(assistantLine('Fertig.'), prompt + 900) + '\n');
+  scanTranscripts(s, prompt);
+  assert.equal(getText(), 'Fertig.', 'what follows it is read as usual');
+});
+
 process.on('exit', () => fs.rmSync(HOME, { recursive: true, force: true }));
 
 // --- API errors ------------------------------------------------------------

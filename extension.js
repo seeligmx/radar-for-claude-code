@@ -541,10 +541,24 @@ function workResumed(sessions, since) {
   return resumed;
 }
 
-// Bytes already read per transcript. A file seen for the first time is only
-// measured, never scanned: its history holds interrupts and errors from
-// earlier turns that must not fire now.
+// Bytes already read per transcript. A file seen for the first time is
+// measured, and nothing but what the running turn wrote is read from it (see
+// scanTranscripts): its history holds interrupts and errors from earlier
+// turns that must not fire now.
 const tailOffsets = new Map();
+// A transcript can be new to the window because its session is: Claude Code
+// writes the file a moment after the first prompt (median 146 ms over 472
+// sessions), so the window first meets it at the next tick, or at the Stop
+// of a turn shorter than that. Only while the prompt is that recent is a
+// first sight read at all. Later it is some other session showing up, and
+// what it wrote lately is not the end of the turn on display.
+const FIRST_SIGHT_MS = 2 * AGENT_POLL_MS;
+// How much of it is read then: the turn began seconds ago, its lines are the
+// last ones in the file.
+const FIRST_READ_BYTES = 256 * 1024;
+// The window notes a prompt a moment after the hook has fired, so the lines
+// of its turn may be stamped slightly before that.
+const TURN_MARGIN_MS = 5000;
 // Set when the transcript shows the turn was interrupted with Esc.
 let sawInterrupt = false;
 // The turn's closing words. A turn that ends by asking something needs you
@@ -567,7 +581,7 @@ function shortReason(text) {
 // turn, which is exactly what Radar must not report.
 let lastToolFailed = false;
 
-function scanTranscriptLine(line) {
+function scanTranscriptLine(line, notBefore = 0) {
   // Cheap pre-filter. tool_result also has to pass when it succeeded, that is
   // what resets lastToolFailed.
   if (
@@ -583,6 +597,11 @@ function scanTranscriptLine(line) {
   } catch {
     return;
   }
+  // From a transcript met for the first time, a line counts only when its
+  // stamp says the running turn wrote it. Anything else is history: a resumed
+  // or forked session opens with the earlier conversation. A line without a
+  // stamp cannot be told from it.
+  if (notBefore && !(Date.parse(d.timestamp) >= notBefore)) return;
   const content = d.message && d.message.content;
   if (!Array.isArray(content)) return; // a typed prompt is a plain string
 
@@ -607,10 +626,12 @@ function scanTranscriptLine(line) {
   }
 }
 
-// Read what is new in this project's transcripts and fold it into the two
-// flags above. Only whole lines are consumed: Claude may be mid-write, and
-// advancing past a partial line would drop it for good.
-function scanTranscripts(sessions) {
+// Read what is new in this project's transcripts and fold it into the flags
+// above. Only whole lines are consumed: Claude may be mid-write, and
+// advancing past a partial line would drop it for good. turnStart is when the
+// last prompt arrived, 0 when this window has seen none.
+function scanTranscripts(sessions, turnStart = 0) {
+  const young = turnStart > 0 && Date.now() - turnStart < FIRST_SIGHT_MS;
   for (const s of sessions) {
     const file = path.join(PROJECTS_DIR, slugFor(s.cwd), s.sessionId + '.jsonl');
     let size;
@@ -619,12 +640,19 @@ function scanTranscripts(sessions) {
     } catch {
       continue; // no transcript yet
     }
-    const seen = tailOffsets.get(file);
-    if (seen === undefined || size < seen) {
-      tailOffsets.set(file, size); // first sight, or replaced: baseline only
+    let seen = tailOffsets.get(file);
+    const first = seen === undefined || size < seen; // first sight, or replaced
+    if (first) {
+      if (!young) {
+        tailOffsets.set(file, size); // baseline only
+        continue;
+      }
+      seen = Math.max(0, size - FIRST_READ_BYTES);
+    }
+    if (size === seen) {
+      tailOffsets.set(file, size);
       continue;
     }
-    if (size === seen) continue;
     let buf;
     try {
       const fd = fs.openSync(file, 'r');
@@ -642,8 +670,13 @@ function scanTranscripts(sessions) {
     const nl = buf.lastIndexOf(0x0a);
     if (nl === -1) continue; // no complete line yet, keep the offset
     tailOffsets.set(file, seen + nl + 1);
-    for (const line of buf.subarray(0, nl).toString('utf8').split('\n')) {
-      if (line) scanTranscriptLine(line);
+    const lines = buf.subarray(0, nl).toString('utf8').split('\n');
+    // A first read that does not reach back to the first byte begins inside
+    // a line.
+    if (first && seen > 0) lines.shift();
+    const notBefore = first ? turnStart - TURN_MARGIN_MS : 0;
+    for (const line of lines) {
+      if (line) scanTranscriptLine(line, notBefore);
     }
   }
 }
@@ -1174,7 +1207,7 @@ async function activate(context) {
       clearState();
       return true;
     }
-    scanTranscripts(sessions);
+    scanTranscripts(sessions, promptAt);
     if (sawInterrupt) {
       sawInterrupt = false;
       // Esc ends the turn, not necessarily the work. Since Claude Code 2.1.286
@@ -1294,7 +1327,7 @@ async function activate(context) {
       if (label === 'stop') {
         const root = projectRoot();
         const sessions = root ? liveSessionsHere(root) : undefined;
-        if (sessions && sessions.length > 0) scanTranscripts(sessions);
+        if (sessions && sessions.length > 0) scanTranscripts(sessions, promptAt);
         // A question wins over a failure: both send you to the window, but
         // "answer me" is the more accurate instruction than "look at this".
         if (

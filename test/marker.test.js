@@ -364,6 +364,32 @@ test('a question wins over a failed tool call', async () => {
   assert.match(title, /⚠️/, '"answer me" beats "look at this"');
 });
 
+test('the very first turn of a new session ends on its question too', async () => {
+  // The window has never seen this session's transcript: Claude Code writes
+  // it a moment after the first prompt, and a turn shorter than the tick is
+  // over before any sweep has looked at it.
+  const id = 'ffffffff-1111-2222-3333-444444444444';
+  const fresh = path.join(path.dirname(transcript), `${id}.jsonl`);
+  fs.writeFileSync(pidFile, JSON.stringify({ pid: process.pid, sessionId: id, cwd: fs.realpathSync(PROJECT) }));
+  try {
+    await hook('prompt');
+    fs.writeFileSync(
+      fresh,
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: new Date().toISOString(),
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Ich sehe zwei Kandidaten.\n\nWelche Datei meinst du?' }] },
+      }) + '\n'
+    );
+    await hook('stop');
+    assert.match(title, /⚠️/, 'read from its first line, not just measured');
+    assert.match(bannerText(), /Needs you/);
+  } finally {
+    fs.rmSync(fresh, { force: true });
+    startSession();
+  }
+});
+
 test('a question in the middle of the text does not count', async () => {
   startSession();
   await hook('prompt');
