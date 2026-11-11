@@ -1118,6 +1118,9 @@ async function activate(context) {
   let backgroundWork = false;
   // When the ⚠️ on display first showed (see showAttention).
   let waitingSince = 0;
+  // When the last prompt arrived, typed or sent by background work that
+  // ended. The clock can be older than that: a wake-up keeps it (see check()).
+  let promptAt = 0;
   let peekTimer; // hides the briefly shown marker in the active window again
   context.subscriptions.push({ dispose: () => clearTimeout(peekTimer) });
 
@@ -1206,8 +1209,12 @@ async function activate(context) {
     // Not while the marker is held for background work: idle is the expected
     // state then. A prompt the hooks missed gets the same "needs you" a hook
     // would raise, plus the reason the registry names.
+    // Measured from the last prompt where that is later than the clock: a
+    // wake-up keeps the clock of its run, and the idle the session sat in
+    // while the marker was held is newer than that clock. Until the CLI had
+    // written busy again, it read as the end of the turn that had just begun.
     if (currentLabel === 'working' && workingSince) {
-      const verdict = registryVerdict(sessions, workingSince);
+      const verdict = registryVerdict(sessions, Math.max(workingSince, promptAt));
       if (verdict && verdict.label === 'idle' && !backgroundWork) {
         clearState();
         return true;
@@ -1311,7 +1318,8 @@ async function activate(context) {
       // turn: Esc fires no hook, so the clock keeps running until the next
       // prompt - which is exactly this branch.
       if (label === 'prompt') {
-        if (!wake) workingSince = Date.now();
+        promptAt = Date.now();
+        if (!wake) workingSince = promptAt;
         label = 'working';
         // A new prompt starts a clean turn: whatever failed in the previous
         // one must not colour this one's ending red.

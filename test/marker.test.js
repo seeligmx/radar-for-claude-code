@@ -772,6 +772,34 @@ test('a wake-up from background work keeps the clock of its run', async () => {
   }
 });
 
+test('a wake-up is not taken down by the idle the hold left behind', async () => {
+  // While the marker is held for background work the session can sit idle,
+  // and that stamp is newer than the clock the wake-up keeps. Until the CLI
+  // has written busy again, it must not read as the end of the turn that
+  // has just begun.
+  setStatus('busy');
+  await hook('prompt');
+  try {
+    later(6);
+    setStatus('idle'); // the turn is over, the background work is not
+    await hook('working\nbackground');
+    sweepTick();
+    assert.equal(title, '💬 6m ', 'held: that idle is expected');
+
+    await hook('prompt\nwake'); // woken, the registry still shows the old idle
+    sweepTick();
+    assert.equal(title, '💬 6m ', 'the wake-up came after that idle');
+
+    later(7);
+    setStatus('idle'); // the woken turn ends, and no Stop arrives
+    sweepTick();
+    assert.equal(title, '', 'an idle after the wake-up still ends it');
+  } finally {
+    backToNow();
+    startSession();
+  }
+});
+
 test('the command marker shows no agent count', async () => {
   // The hook says nothing but a command is left. A transcript that still
   // looks alive is a leftover then, and must not put a 🤖 next to the ⏳.
