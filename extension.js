@@ -503,7 +503,12 @@ function liveSessionsHere(root) {
     // the marker hangs on the project root (the hook uses CLAUDE_PROJECT_DIR).
     // Deliberately no filter on d.entrypoint, or sessions started in a plain
     // terminal would count as dead and lose their marker.
-    if (cwd === root || cwd.startsWith(root + path.sep)) here.push(d);
+    // A session in a folder below can belong to a window of its own, opened
+    // on that folder, and reports there: its hooks write that marker. Here it
+    // keeps a marker alive as before, and is nobody's neighbour (see
+    // othersAtWork).
+    if (cwd === root) here.push(d);
+    else if (cwd.startsWith(root + path.sep)) here.push({ ...d, below: true });
   }
   return sawAny ? here : undefined;
 }
@@ -1247,7 +1252,8 @@ async function activate(context) {
   };
 
   // Is a session other than this one at work, as far as the registry says?
-  const othersAtWork = (sessions, sid) => !!sessions && sessions.some((s) => s.status === 'busy' && s.sessionId !== sid);
+  // One in a folder below is not of this window (see liveSessionsHere).
+  const othersAtWork = (sessions, sid) => !!sessions && sessions.some((s) => s.status === 'busy' && !s.below && s.sessionId !== sid);
 
   // What is left once an attention marker has been seen. Usually nothing. A
   // clock that is still running means another session works on (see check()),
@@ -1276,7 +1282,7 @@ async function activate(context) {
     // What a session wrote since its question is in the transcript.
     if (asking.size > 0 && sessions && sessions.length > 0) scanTranscripts(sessions, promptAt);
     movedOn(sessions);
-    return asking.size > 0 || (!!sessions && sessions.some((s) => s.status === 'waiting'));
+    return asking.size > 0 || (!!sessions && sessions.some((s) => s.status === 'waiting' && !s.below));
   };
 
   // A session that is at work again has moved on from its closing question: a
@@ -1377,7 +1383,7 @@ async function activate(context) {
         if (mem.interrupt) interrupted.add(id);
         mem.interrupt = false;
       }
-      const someoneElseAtWork = sessions.some((s) => s.status === 'busy' && !interrupted.has(s.sessionId));
+      const someoneElseAtWork = sessions.some((s) => s.status === 'busy' && !s.below && !interrupted.has(s.sessionId));
       // Esc ends the turn, not necessarily the work. Since Claude Code 2.1.286
       // the VS Code panel leaves background agents running on Stop and Esc
       // (verified live against 2.1.296: the agent worked on for 43 s after
@@ -1397,7 +1403,7 @@ async function activate(context) {
         // still asking, and then it was a neighbour that got interrupted. The
         // session that got the Esc can still read waiting for a moment, and
         // is not asked.
-        if (!sessions.some((s) => s.status === 'waiting' && !interrupted.has(s.sessionId))) {
+        if (!sessions.some((s) => s.status === 'waiting' && !s.below && !interrupted.has(s.sessionId))) {
           if (asking.size > 0) {
             // A question that closed a turn is still owed: ⚠️ stands for it.
             turnOver = true;
@@ -1457,7 +1463,7 @@ async function activate(context) {
     }
     // A clock kept running under an attention marker stands for a session
     // that works on. Once none does, there is nothing to come back to.
-    if (currentLabel !== 'working' && workingSince && !sessions.some((s) => s.status === 'busy')) workingSince = null;
+    if (currentLabel !== 'working' && workingSince && !sessions.some((s) => s.status === 'busy' && !s.below)) workingSince = null;
     return false;
   };
 

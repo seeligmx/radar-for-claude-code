@@ -181,6 +181,16 @@ test('a session started in a subfolder still belongs to the project', () => {
   assert.equal(liveSessionsHere('/work/app').length, 1, 'prefix match');
 });
 
+test('a session in a folder below is told apart from one in the folder itself', () => {
+  // Alive for the window above it, but it may report to a window of its own.
+  clearSessions();
+  writeSession(process.pid, '/work/app/src/deep');
+  assert.equal(liveSessionsHere('/work/app')[0].below, true);
+  clearSessions();
+  writeSession(process.pid, '/work/app');
+  assert.equal(liveSessionsHere('/work/app')[0].below, undefined, 'the folder itself');
+});
+
 test('a project reached through a symlink still matches', () => {
   // VS Code reports the link, a shell-started Claude reports the target (or the
   // other way round). Both sides are resolved, so the two meet.

@@ -1507,6 +1507,65 @@ test('a second prompt rings, however soon after the first one was answered', asy
   }
 });
 
+// --- a session in a folder below -----------------------------------------------
+
+// A window on a folder also finds the sessions of the folders below it. With
+// a window of its own open there, such a session writes that window's marker.
+// Here it keeps a marker alive, and that is all.
+
+const sessionBelow = (status, at = Date.now(), extra = {}) =>
+  fs.writeFileSync(
+    otherPidFile,
+    JSON.stringify({ pid: process.ppid, sessionId: OTHER_ID, cwd: path.join(fs.realpathSync(PROJECT), 'packages', 'web'), status, statusUpdatedAt: at, ...extra })
+  );
+
+test('a session in a folder below keeps a marker alive, and is no neighbour', async () => {
+  sessionBelow('busy');
+  endSession();
+  await hook('working');
+  sweepTick();
+  assert.match(title, /💬/, 'somebody lives under this folder');
+
+  mine('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  sweepTick();
+  try {
+    appendInterrupt(); // Esc here
+    mine('idle');
+    sweepTick();
+    assert.equal(title, '', 'the work down there has a window of its own to show it');
+  } finally {
+    oneSessionAgain();
+  }
+});
+
+test('it neither takes the title back after a done you looked at, nor holds a prompt that was answered', async () => {
+  sessionBelow('busy');
+  mine('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  try {
+    appendAssistant('Fertig.');
+    mine('idle');
+    await hook(`stop\n${SESSION_ID}`);
+    assert.match(title, /🟢/);
+    setFocus(true);
+    assert.equal(title, '', 'nobody else works in this folder');
+    setFocus(false);
+
+    mine('busy');
+    await hook(`prompt\n\n${SESSION_ID}`);
+    mine('waiting', Date.now(), { waitingFor: 'permission prompt' });
+    await hook('waiting');
+    sessionBelow('waiting', Date.now(), { waitingFor: 'permission prompt' }); // a prompt of its own down there
+    mine('busy'); // the one here is answered
+    await hook('working');
+    assert.match(title, /💬/, 'the prompt down there is not for this window to show');
+  } finally {
+    setFocus(false);
+    oneSessionAgain();
+  }
+});
+
 test('deactivate clears the title, and a closing window cancelling the call is no error', async () => {
   mine('busy');
   await hook(`prompt\n\n${SESSION_ID}`);
