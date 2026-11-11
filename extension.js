@@ -38,6 +38,7 @@ const TITLE_VAR = '${claudeRadarStatus}';
 // own; 'error' comes from StopFailure (see check() for both).
 const LABELS = ['prompt', 'working', 'waiting', 'stop', 'error'];
 const PEEK_MS = 1000; // focused window: show an attention marker briefly, then hide it
+const ECHO_MS = 10000; // a ⚠️ reported again this soon is the same prompt, not a new one
 
 // One hook per event, each writes an event label into the marker file.
 // MARKER_F computes $f = this project's marker file path, identical to
@@ -1189,9 +1190,13 @@ async function activate(context) {
   // once, then the tab is quiet again. Unfocused: persistent marker + banner.
   const showAttention = (label, ranFor = '', ranMs = 0, reason = '') => {
     clearTimeout(peekTimer); // a running peek must never outlive a new event
+    // A prompt left open is reported twice: PermissionRequest at once, the
+    // Notification six seconds later (measured against 2.1.296). The second
+    // report is no news, so it does not ring again. Later than that it is
+    // another prompt, and that one does.
+    const echo = label === 'waiting' && currentLabel === 'waiting' && Date.now() - waitingSince < ECHO_MS;
     // When this ⚠️ first showed: the sweep measures an answered prompt against
-    // it. A repeat keeps the time, a permission prompt alone arrives as two
-    // hook events.
+    // it. A repeat keeps the time.
     if (label === 'waiting' && currentLabel !== 'waiting') waitingSince = Date.now();
     currentLabel = label;
     if (vscode.window.state.focused) {
@@ -1203,7 +1208,7 @@ async function activate(context) {
       return;
     }
     setMarker(label);
-    notify(label, ranFor, ranMs, reason);
+    if (!echo) notify(label, ranFor, ranMs, reason);
   };
 
   // One read-only pass while a marker is on display: is anyone still working

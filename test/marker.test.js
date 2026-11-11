@@ -674,6 +674,23 @@ test('a permission allowed elsewhere turns ⚠️ back into 💬', async () => {
   }
 });
 
+test('a permission prompt rings once, though it is reported twice', async () => {
+  startSession();
+  await hook('prompt');
+  await hook('waiting'); // PermissionRequest
+  assert.match(bannerText(), /Needs you/, 'the prompt rings');
+  await hook('waiting'); // the Notification for the same prompt, seconds later
+  assert.equal(banners.length, 0, 'its second report does not');
+  assert.match(title, /⚠️/);
+  try {
+    later(1);
+    await hook('waiting'); // a minute on, that is another prompt
+    assert.match(bannerText(), /Needs you/);
+  } finally {
+    backToNow();
+  }
+});
+
 test('a repeat of the same ⚠️ does not move the moment it is measured from', async () => {
   // A prompt left open rings twice: PermissionRequest at once, the
   // Notification six seconds later. The answer counts against the first.
