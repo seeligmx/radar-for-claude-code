@@ -178,3 +178,60 @@ test('the async flag is part of what "installed" means', async () => {
   assert.equal(after.hooks.PostToolUse[0].hooks[0].async, true);
   assert.equal(after.hooks.PostToolUse.length, 1, 'reconcile replaces, it does not stack');
 });
+
+// After an update every open window reconciles the hooks as it activates, and
+// on a cold start they all do it within the same moment. Each one is a child
+// process here, held at a common start time so they really collide.
+const WINDOW = `
+  const os = require('os'), Module = require('module');
+  const [copy, home, startAt] = process.argv.slice(1);
+  os.homedir = () => home;
+  const load = Module._load;
+  Module._load = (req, ...rest) =>
+    req === 'vscode'
+      ? { workspace: {}, window: { showInformationMessage: async () => undefined, showErrorMessage: async () => undefined }, commands: {} }
+      : load(req, ...rest);
+  const { installHooks } = require(copy).__test;
+  while (Date.now() < Number(startAt)) {}
+  installHooks(true).then(() => process.stdout.write('ok'), (e) => process.stdout.write(String(e.code || e)));
+`;
+
+test('windows that update the hooks in the same moment do not trip over each other', async () => {
+  const { spawn } = require('node:child_process');
+  for (let round = 0; round < 3; round++) {
+    const home = fs.mkdtempSync(path.join(HOME, 'cold-start-'));
+    const settingsPath = path.join(home, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(settingsPath));
+    // What an older Radar left behind, next to a hook and a setting of the user's own.
+    const before = {
+      permissions: { allow: ['Bash(ls:*)'] },
+      hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'echo stop > ~/.claude/tab-status/x' }, { type: 'command', command: 'echo mine' }] }] },
+    };
+    fs.writeFileSync(settingsPath, JSON.stringify(before, null, 2) + '\n', { mode: 0o600 });
+
+    const startAt = Date.now() + 400;
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        new Promise((resolve) => {
+          let out = '';
+          const child = spawn(process.execPath, ['-e', WINDOW, COPY, home, String(startAt)]);
+          child.stdout.on('data', (d) => (out += d));
+          child.stderr.on('data', (d) => (out += d));
+          child.on('close', () => resolve(out));
+        })
+      )
+    );
+    assert.deepEqual(results, Array(6).fill('ok'), 'no window fails on what another one did');
+
+    const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    assert.deepEqual(after.permissions, before.permissions, 'the rest of the settings is untouched');
+    assert.ok(after.hooks.Stop.some((g) => g.hooks.some((h) => h.command === 'echo mine')), 'the user\'s own hook survives');
+    for (const spec of HOOK_SPECS) {
+      const own = (after.hooks[spec.event] || []).flatMap((g) => g.hooks).filter((h) => h.command.includes('tab-status'));
+      assert.deepEqual(own.map((h) => h.command), [spec.command], `${spec.event} is installed once, and current`);
+    }
+    assert.equal(fs.statSync(settingsPath).mode & 0o777, 0o600, 'and still private');
+    assert.doesNotThrow(() => JSON.parse(fs.readFileSync(settingsPath + '.claude-radar.bak', 'utf8')), 'the backup is a whole file');
+    assert.deepEqual(fs.readdirSync(path.dirname(settingsPath)).sort(), ['settings.json', 'settings.json.claude-radar.bak'], 'no temp file is left behind');
+  }
+});

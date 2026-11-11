@@ -909,10 +909,22 @@ function writeSettings(json) {
   } catch {
     /* not there yet: create it at the plain path with 600 */
   }
-  const tmp = target + '.claude-radar.tmp';
+  // One temp file per window. After an update every window reconciles the
+  // hooks as it starts, and with a shared name one renamed the file away
+  // under the next, or published it while that one had just emptied it.
+  const tmp = `${target}.claude-radar.tmp.${process.pid}`;
   fs.writeFileSync(tmp, JSON.stringify(json, null, 2) + '\n', { mode });
   fs.chmodSync(tmp, mode); // mode above only applies on create, not to a leftover tmp file
   fs.renameSync(tmp, target);
+}
+
+// The backup goes through a temp file of its own as well: two windows copying
+// into the same file at once left a mix of both behind.
+function backupSettings() {
+  const bak = SETTINGS_PATH + '.claude-radar.bak';
+  const tmp = `${bak}.tmp.${process.pid}`;
+  fs.copyFileSync(SETTINGS_PATH, tmp);
+  fs.renameSync(tmp, bak);
 }
 
 async function installHooks(auto = false) {
@@ -945,7 +957,7 @@ async function installHooks(auto = false) {
     if (!auto) vscode.window.showInformationMessage('Hooks are already up to date.');
     return;
   }
-  if (existed) fs.copyFileSync(SETTINGS_PATH, SETTINGS_PATH + '.claude-radar.bak');
+  if (existed) backupSettings();
   fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
   writeSettings(json);
   // Claude Code reads hooks only when a session starts: one that is already
@@ -985,7 +997,7 @@ async function removeHooks() {
     vscode.window.showInformationMessage('No Radar for Claude Code hooks to remove.');
     return;
   }
-  fs.copyFileSync(SETTINGS_PATH, SETTINGS_PATH + '.claude-radar.bak');
+  backupSettings();
   writeSettings(json);
   vscode.window.showInformationMessage('Radar for Claude Code hooks removed. Backup saved.');
 }
