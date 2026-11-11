@@ -253,8 +253,16 @@ function projectRoot() {
 
 // How Claude Code names its transcript folders: every non-alphanumeric UTF-16
 // unit becomes '-' (verified against real transcript dirs, including __ and
-// emoji paths).
-const slugFor = (p) => p.replace(/[^a-zA-Z0-9]/g, '-');
+// emoji paths). Past 200 characters it cuts the name there and appends a hash
+// of the whole path (measured against 2.1.322 with a path of 241).
+const SLUG_MAX = 200;
+function slugFor(p) {
+  const slug = p.replace(/[^a-zA-Z0-9]/g, '-');
+  if (slug.length <= SLUG_MAX) return slug;
+  let hash = 0;
+  for (let i = 0; i < p.length; i++) hash = ((hash << 5) - hash + p.charCodeAt(i)) | 0;
+  return `${slug.slice(0, SLUG_MAX)}-${Math.abs(hash).toString(36)}`;
+}
 
 function markerFile() {
   const p = projectRoot();

@@ -263,6 +263,22 @@ test('a non-ASCII path resolves to the folder Claude actually uses', () => {
   assert.equal(slugFor('/Users/x/Brain/💼 Projekte/Steuern'), '-Users-x-Brain----Projekte-Steuern');
 });
 
+test('a very long path gets the shortened folder name Claude Code gives it', () => {
+  // Past 200 characters Claude Code cuts the name there and appends a hash of
+  // the whole path. The rule was checked against a real project with a path
+  // of 241 characters (2.1.322); this is the same rule on a neutral path.
+  const long =
+    '/Users/x/Library/Mobile Documents/iCloud~md~obsidian/Documents/Brain/💼 Projekte/' +
+    'Kunde mit einem sehr langen Ordnernamen/'.repeat(4) +
+    'Unterlagen 2026';
+  assert.equal(
+    slugFor(long),
+    '-Users-x-Library-Mobile-Documents-iCloud-md-obsidian-Documents-Brain----Projekte-Kunde-mit-einem-sehr-langen-Ordnernamen-Kunde-mit-einem-sehr-langen-Ordnernamen-Kunde-mit-einem-sehr-langen-Ordnernamen-6t5bdi'
+  );
+  assert.equal(slugFor('/' + 'a'.repeat(199)).length, 200, 'exactly 200 is left alone');
+  assert.match(slugFor('/' + 'a'.repeat(200)), /^-a{199}-[0-9a-z]+$/, 'one more is cut');
+});
+
 test('a replaced (shorter) transcript re-baselines instead of misreading', () => {
   const cwd = '/work/rotate';
   const file = transcriptFor(cwd, 's3');
