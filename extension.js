@@ -1568,6 +1568,12 @@ async function activate(context) {
       // turn: Esc fires no hook, so the clock keeps running until the next
       // prompt - which is exactly this branch.
       if (label === 'prompt') {
+        // What the turn before left in the transcript is read first, so that
+        // the fresh start below covers it. An Esc fires no hook, and one the
+        // sweep had not read yet counted against the turn this prompt begins.
+        const here = projectRoot();
+        const live = here ? liveSessionsHere(here) : undefined;
+        if (live && live.length > 0) scanTranscripts(live, promptAt);
         promptAt = Date.now();
         if (!wake) {
           if (sid) turnStarts.set(sid, promptAt);

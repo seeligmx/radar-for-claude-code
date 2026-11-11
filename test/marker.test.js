@@ -1332,6 +1332,52 @@ test('a prompt seen the moment it came up is still waited for', async () => {
   }
 });
 
+// --- what a turn leaves behind for the next prompt -----------------------------
+
+// An Esc fires no hook. Its line sits in the transcript until somebody reads
+// it, and a prompt that comes first must not inherit it.
+
+test('an Esc nobody had read yet does not take down the next prompt', async () => {
+  mine('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  sweepTick(); // the transcript is followed from here on
+  try {
+    appendInterrupt(); // Esc, and the correction is typed at once
+    await hook(`prompt\n\n${SESSION_ID}`);
+    sweepTick();
+    assert.match(title, /💬/, 'that Esc ended the turn before, not this one');
+
+    appendInterrupt(); // an Esc in the new turn still counts
+    mine('idle');
+    sweepTick();
+    assert.equal(title, '');
+  } finally {
+    startSession();
+  }
+});
+
+test('the same on the first turn the window sees', async () => {
+  // A new session, or a window just reloaded: the transcript is met at the
+  // first sweep, and the last seconds of it are read then.
+  const id = 'cccccccc-5555-6666-7777-888888888888';
+  const fresh = path.join(path.dirname(transcript), `${id}.jsonl`);
+  const freshLine = (content) =>
+    fs.appendFileSync(fresh, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content } }) + '\n');
+  registryEntry(pidFile, process.pid, id, 'busy', Date.now());
+  await hook(`prompt\n\n${id}`);
+  try {
+    freshLine('Bau das um');
+    freshLine([{ type: 'text', text: '[Request interrupted by user]' }]); // Esc
+    await hook(`prompt\n\n${id}`); // and the correction right behind it
+    freshLine('Nein, anders');
+    sweepTick(); // the first look at this transcript
+    assert.match(title, /💬/, 'the Esc belongs to the turn before');
+  } finally {
+    fs.rmSync(fresh, { force: true });
+    startSession();
+  }
+});
+
 test('deactivate clears the title, and a closing window cancelling the call is no error', async () => {
   mine('busy');
   await hook(`prompt\n\n${SESSION_ID}`);
