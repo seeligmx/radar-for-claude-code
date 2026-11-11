@@ -1331,3 +1331,22 @@ test('a prompt seen the moment it came up is still waited for', async () => {
     startSession();
   }
 });
+
+test('deactivate clears the title, and a closing window cancelling the call is no error', async () => {
+  mine('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  assert.match(title, /💬/);
+  await ext.deactivate();
+  assert.equal(title, '');
+  // What VS Code does to the call while the extension host shuts down.
+  const real = vscode.commands.executeCommand;
+  vscode.commands.executeCommand = async () => {
+    throw new Error('Canceled');
+  };
+  try {
+    await ext.deactivate();
+  } finally {
+    vscode.commands.executeCommand = real;
+    startSession();
+  }
+});

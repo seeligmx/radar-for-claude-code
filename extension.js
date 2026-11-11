@@ -1707,8 +1707,10 @@ async function activate(context) {
   })();
 }
 
+// A window that is closing cancels the call, and a rejected deactivate()
+// ends up in the extension host log as an error.
 function deactivate() {
-  return vscode.commands.executeCommand('setContext', CONTEXT_KEY, '');
+  return vscode.commands.executeCommand('setContext', CONTEXT_KEY, '').then(undefined, () => {});
 }
 
 module.exports = { activate, deactivate };
