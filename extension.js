@@ -1204,6 +1204,8 @@ async function activate(context) {
   let backgroundWork = false;
   // When the ⚠️ on display first showed (see showAttention).
   let waitingSince = 0;
+  // When a prompt last rang, or was peeked at (see sameOpenPrompt).
+  let rangAt = 0;
   // True while the attention marker on display reports a turn that has ended:
   // done, failed, or a closing question. A ⚠️ for a permission or a dialog
   // belongs to a turn that is still open.
@@ -1293,6 +1295,18 @@ async function activate(context) {
     return dropped;
   };
 
+  // Is the prompt reported at that time still the one that is open? The
+  // registry stamps a prompt within a moment of its hook. With nobody waiting
+  // since then, that prompt was answered, and what is reported now is the
+  // next one. Without the status field (an older Claude Code) there is
+  // nothing to read, and the time alone decides.
+  const sameOpenPrompt = (at) => {
+    const root = projectRoot();
+    const sessions = root ? liveSessionsHere(root) : undefined;
+    if (!sessions || !sessions.some((s) => typeof s.status === 'string')) return true;
+    return sessions.some((s) => s.status === 'waiting' && s.statusUpdatedAt <= at + REGISTRY_LAG_MS);
+  };
+
   // waiting/stop/error are attention events. In the focused window, "peek":
   // show the marker ~1 s, then hide it, without banner/sound. The user sees it
   // once, then the tab is quiet again. Unfocused: persistent marker + banner.
@@ -1304,7 +1318,8 @@ async function activate(context) {
     // another prompt, and that one does. A turn that closes on a question is
     // news of its own.
     const echo =
-      label === 'waiting' && currentLabel === 'waiting' && !over && !turnOver && Date.now() - waitingSince < ECHO_MS;
+      label === 'waiting' && currentLabel === 'waiting' && !over && !turnOver && Date.now() - waitingSince < ECHO_MS && sameOpenPrompt(rangAt);
+    if (label === 'waiting' && !over && !echo) rangAt = Date.now();
     turnOver = over;
     // When this ⚠️ first showed: the sweep measures an answered prompt against
     // it. A repeat keeps the time.

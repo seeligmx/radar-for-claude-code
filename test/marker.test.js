@@ -1484,6 +1484,29 @@ test('a prompt answered elsewhere is noticed after a question came and went', as
   }
 });
 
+test('a second prompt rings, however soon after the first one was answered', async () => {
+  mine('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  mine('waiting', Date.now(), { waitingFor: 'permission prompt' });
+  await hook('waiting'); // PermissionRequest
+  assert.match(bannerText(), /Needs you/);
+  try {
+    mine('busy'); // answered from elsewhere: no hook, and no sweep has run yet
+    await hook('waiting'); // the next prompt, seconds after the first
+    assert.match(bannerText(), /Needs you/, 'another prompt is news');
+    mine('waiting', Date.now(), { waitingFor: 'permission prompt' });
+    await hook('waiting'); // and its own Notification
+    assert.equal(banners.length, 0, 'which is not');
+    assert.match(title, /⚠️/);
+
+    startSession(); // an older Claude Code: no status to read, the time alone decides
+    await hook('waiting');
+    assert.equal(banners.length, 0, 'as before');
+  } finally {
+    startSession();
+  }
+});
+
 test('deactivate clears the title, and a closing window cancelling the call is no error', async () => {
   mine('busy');
   await hook(`prompt\n\n${SESSION_ID}`);
