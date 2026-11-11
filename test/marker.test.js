@@ -1403,6 +1403,87 @@ test('a closing question outlasts Stop hooks that take their time', async () => 
   }
 });
 
+// --- a prompt that was dismissed, or answered next to a question ---------------
+
+// Esc on a prompt fires no hook either. What the title shows after it depends
+// on what is left: a question another session closed on, a neighbour at work,
+// or nothing.
+
+test('a prompt dismissed the moment before a sweep is not left standing', async () => {
+  // The registry follows the Esc by about 0.3 s. A sweep in between reads the
+  // interrupt while the entry still says waiting.
+  mine('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  sweepTick();
+  mine('waiting', Date.now(), { waitingFor: 'permission prompt' });
+  await hook('waiting');
+  assert.match(title, /⚠️/);
+  try {
+    appendInterrupt(); // Esc on the prompt, the entry has not followed yet
+    sweepTick();
+    assert.equal(title, '', 'the transcript says it was dismissed');
+  } finally {
+    startSession();
+  }
+});
+
+test('a dismissed prompt hands the title back to the neighbour that works on', async () => {
+  await twoSessions();
+  try {
+    mine('waiting', Date.now(), { waitingFor: 'permission prompt' });
+    await hook('waiting');
+    assert.match(title, /⚠️/);
+    await hook('working'); // the neighbour's tool call, held back
+    appendInterrupt(); // Esc on the prompt here
+    mine('idle');
+    sweepTick();
+    assert.match(title, /💬/, 'the neighbour is still at it');
+  } finally {
+    oneSessionAgain();
+  }
+});
+
+test('a dismissed prompt leaves a closing question that is still owed', async () => {
+  await twoSessions();
+  try {
+    appendAssistant('Soll ich das so machen?');
+    mine('idle');
+    await hook(`stop\n${SESSION_ID}`);
+    assert.match(title, /⚠️/);
+    other('waiting', Date.now(), { waitingFor: 'permission prompt' });
+    await hook('waiting'); // the neighbour asks for a permission
+    otherInterrupt(); // and gets an Esc for it
+    other('idle');
+    sweepTick();
+    assert.match(title, /⚠️/, 'the question here was never answered');
+
+    await hook(`prompt\n\n${SESSION_ID}`); // now it is
+    assert.match(title, /💬/);
+  } finally {
+    oneSessionAgain();
+  }
+});
+
+test('a prompt answered elsewhere is noticed after a question came and went', async () => {
+  await twoSessions();
+  try {
+    other('waiting', Date.now(), { waitingFor: 'permission prompt' });
+    await hook('waiting'); // the neighbour's prompt
+    appendAssistant('Soll ich das so machen?');
+    mine('idle');
+    await hook(`stop\n${SESSION_ID}`); // a question on top of it
+    mine('busy');
+    await hook(`prompt\n\n${SESSION_ID}`); // answered
+    assert.match(title, /⚠️/, 'the prompt next door is still open');
+
+    other('busy'); // allowed from a phone: no hook says so
+    sweepTick();
+    assert.match(title, /💬/, 'nobody is waiting any more');
+  } finally {
+    oneSessionAgain();
+  }
+});
+
 test('deactivate clears the title, and a closing window cancelling the call is no error', async () => {
   mine('busy');
   await hook(`prompt\n\n${SESSION_ID}`);

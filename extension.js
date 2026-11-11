@@ -1379,10 +1379,25 @@ async function activate(context) {
         }
       } else if (!turnOver) {
         // A ⚠️ whose prompt was open: Esc dismissed it, unless a session is
-        // still asking, and then it was a neighbour that got interrupted.
-        if (!sessions.some((s) => s.status === 'waiting')) {
-          clearState();
-          return true;
+        // still asking, and then it was a neighbour that got interrupted. The
+        // session that got the Esc can still read waiting for a moment, and
+        // is not asked.
+        if (!sessions.some((s) => s.status === 'waiting' && !interrupted.has(s.sessionId))) {
+          if (asking.size > 0) {
+            // A question that closed a turn is still owed: ⚠️ stands for it.
+            turnOver = true;
+          } else if (someoneElseAtWork) {
+            // A neighbour works on, and the title goes back to that.
+            currentLabel = 'working';
+            shellHold = false;
+            if (!workingSince) workingSince = Date.now();
+            updateAgentCount();
+            setMarker('working');
+            return true;
+          } else {
+            clearState();
+            return true;
+          }
         }
       }
       // A marker for a turn that had ended (done, failed, a closing question)
@@ -1610,7 +1625,12 @@ async function activate(context) {
       // window), never with banner/sound -> no flicker on focus changes
       // while Claude is working.
       if (label === 'working') {
-        if (currentLabel === 'waiting' && stillAsking()) return; // ⚠️ stands, see stillAsking
+        if (currentLabel === 'waiting' && stillAsking()) {
+          // With no question owed any more, what stands is a prompt that is
+          // open, and the sweep may find it answered or dismissed.
+          if (asking.size === 0) turnOver = false;
+          return; // ⚠️ stands, see stillAsking
+        }
         currentLabel = 'working';
         backgroundWork = heldForBackground;
         clearTimeout(peekTimer); // a running peek must never overwrite a new event
