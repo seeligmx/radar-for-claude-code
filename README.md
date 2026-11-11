@@ -43,7 +43,7 @@ Optional: `terminal-notifier` (Homebrew) makes the banners clickable. Radar offe
 ## Privacy and performance
 
 - **No network, no telemetry.** Everything stays in local files.
-- **Event-driven.** With an empty title nothing runs at all. While a marker shows, a light check runs every 10 s.
+- **Event-driven.** While a marker shows or a prompt waits for your answer, a light check runs every 10 s. Otherwise nothing runs at all.
 - **Claude never waits for Radar.** The hook after each tool call runs async.
 - **Open source.** [Read the code on GitHub](https://github.com/seeligmx/radar-for-claude-code).
 
@@ -57,6 +57,7 @@ Claude Code hooks write the current status to a small file per project in `~/.cl
 - An `Esc` shows up within 10 s, not instantly: Claude Code fires no hook for it.
 - 🔴 means the turn failed technically. A task Claude says it can't do still ends green.
 - Agents running in Anthropic's cloud aren't counted.
+- Several sessions in one project share one marker. ⚠️ wins until you answer it.
 - Multi-root workspaces: the first folder wins.
 
 ## Settings

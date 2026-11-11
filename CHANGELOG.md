@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.0 - 2026-11-11
+
+- **Feature:** Radar keeps track of several Claude sessions in one project. ⚠️ stays until you answer it, an Esc in one session leaves the others' 💬 alone, and the clock runs as long as one of them works.
+- **Fixed:** After you allow a permission, 💬 is back within 10 seconds. The title used to stay empty until the command was through.
+- **Fixed:** A permission prompt rings once, not twice.
+- **Fixed:** A new prompt right after Esc no longer empties the title while Claude works.
+- **Fixed:** A short first turn in a new session is no longer missed: a closing question shows ⚠️, a failed last tool call 🔴.
+- **Fixed:** The clock no longer starts over each time background work wakes Claude, and the done banner reports the whole run.
+- **Fixed:** A finished agent could stay in the 🤖 count for ten minutes and keep 💬 after Esc.
+- **Fixed:** Rarer cases: banner clicks in a `.code-workspace` window, folders opened under another spelling (`~/Dev/app`), very long project paths, and several windows refreshing the hooks at once.
+
 ## 1.4.0 - 2026-10-13
 
 - **Feature:** A background command that outlives the turn shows ⏳ instead of a working clock. Opt-in: `claudeRadar.shellTasksKeepWorking`.
