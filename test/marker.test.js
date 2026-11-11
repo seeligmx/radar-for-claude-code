@@ -922,3 +922,76 @@ test('a prompt answered during a command hold goes back to 💬, not to ⏳', as
     startSession();
   }
 });
+
+// --- several sessions in one project -----------------------------------------
+
+// Two or three Claudes in one window share the project, and with it one marker
+// file. The hooks name the session on a prompt and on a plain done (see
+// hooks.test.js), and the registry says what each of them is doing. The second
+// session here lives under the pid of the test runner's parent.
+
+const OTHER_ID = 'bbbbbbbb-1111-2222-3333-444444444444';
+const otherPidFile = path.join(SESSIONS, `${process.ppid}.json`);
+const otherTranscript = path.join(path.dirname(transcript), `${OTHER_ID}.jsonl`);
+const registryEntry = (file, pid, id, status, at, extra) =>
+  fs.writeFileSync(file, JSON.stringify({ pid, sessionId: id, cwd: fs.realpathSync(PROJECT), status, statusUpdatedAt: at, ...extra }));
+const mine = (status, at = Date.now(), extra = {}) => registryEntry(pidFile, process.pid, SESSION_ID, status, at, extra);
+const other = (status, at = Date.now(), extra = {}) => registryEntry(otherPidFile, process.ppid, OTHER_ID, status, at, extra);
+const otherLine = (obj) => fs.appendFileSync(otherTranscript, JSON.stringify({ ...obj, timestamp: new Date().toISOString() }) + '\n');
+const otherResult = (isError) =>
+  otherLine({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'x', ...(isError ? { is_error: true } : {}) }] } });
+const otherSays = (text) => otherLine({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } });
+const otherInterrupt = () =>
+  otherLine({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] } });
+// Both at work, both transcripts followed.
+async function twoSessions() {
+  fs.writeFileSync(otherTranscript, '');
+  mine('busy');
+  other('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  await hook(`prompt\n\n${OTHER_ID}`);
+  sweepTick();
+}
+const oneSessionAgain = () => {
+  fs.rmSync(otherPidFile, { force: true });
+  fs.rmSync(otherTranscript, { force: true });
+  startSession();
+};
+
+test('a turn is judged by its own transcript, not by a neighbour\'s', async () => {
+  await twoSessions();
+  try {
+    otherResult(true); // the neighbour's last tool call failed, and it works on
+    appendAssistant('Alles erledigt.');
+    await hook(`stop\n${SESSION_ID}`);
+    assert.match(title, /🟢/, 'this one ended cleanly');
+    assert.match(bannerText(), /Done/);
+
+    await hook(`prompt\n\n${SESSION_ID}`);
+    otherSays('Was ist hier los?'); // the neighbour thinks aloud
+    appendAssistant('Fertig.');
+    await hook(`stop\n${SESSION_ID}`);
+    assert.match(title, /🟢/, 'and its closing words are its own');
+
+    await hook(`stop\n${OTHER_ID}`);
+    assert.match(title, /⚠️/, 'the neighbour did end on its question');
+
+    await hook(`prompt\n\n${OTHER_ID}`);
+    otherResult(true);
+    otherSays('Das hat nicht geklappt.');
+    await hook(`stop\n${OTHER_ID}`);
+    assert.match(title, /🔴/, 'and its failed tool call is its own, too');
+
+    await hook(`prompt\n\n${SESSION_ID}`); // a prompt here leaves the neighbour's turn alone
+    await hook(`prompt\n\n${OTHER_ID}`);
+    otherResult(true);
+    await hook(`prompt\n\n${SESSION_ID}`);
+    appendAssistant('Fertig.');
+    await hook(`stop\n${SESSION_ID}`);
+    otherSays('Abgebrochen.');
+    await hook(`stop\n${OTHER_ID}`);
+    assert.match(title, /🔴/, 'what failed there before is still known');
+  } finally {
+    oneSessionAgain();
+  }
+});

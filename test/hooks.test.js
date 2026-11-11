@@ -95,6 +95,25 @@ for (const [name, PATH] of Object.entries(PATHS)) {
     assert.equal(run('UserPromptSubmit', 'not json at all', PATH), 'prompt');
   });
 
+  test(`[${name}] a prompt and a plain done name their session`, () => {
+    // Several sessions can share a project and its one marker file.
+    const sid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const prompt = (p) => run('UserPromptSubmit', JSON.stringify({ session_id: sid, prompt: p }), PATH);
+    assert.equal(prompt('Bau mir das bitte'), parser ? `prompt\n\n${sid}` : 'prompt');
+    assert.equal(prompt('<task-notification>\n<task-id>b6</task-id>'), parser ? `prompt\nwake\n${sid}` : 'prompt');
+    assert.equal(prompt([{ type: 'text', text: 'mit Bild' }]), parser ? `prompt\n\n${sid}` : 'prompt', 'a prompt with an image is a list');
+
+    const stop = (payload) => run('Stop', JSON.stringify(payload), PATH);
+    assert.equal(stop({ session_id: sid, background_tasks: [] }), parser ? `stop\n${sid}` : 'stop');
+    assert.equal(
+      stop({ session_id: sid, background_tasks: [{ type: 'subagent', status: 'running' }] }),
+      parser ? 'working\nbackground' : 'stop',
+      'a hold says what holds it, as before'
+    );
+    assert.equal(stop({ session_id: 'a b\nc;$(x)', background_tasks: [] }), parser ? 'stop\nabcx' : 'stop', 'an id is cut down to what a uuid can hold');
+    assert.equal(stop({ session_id: 42 }), 'stop', 'not a string: no id');
+  });
+
   test(`[${name}] Stop: done, unless background work is still running`, () => {
     assert.equal(run('Stop', stopPayload([]), PATH), 'stop');
     const sub = stopPayload([{ type: 'subagent', status: 'running' }]);

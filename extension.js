@@ -92,13 +92,26 @@ const writeMarker = (label) => `${MARKER_F}; printf '%s' "${label}" ${WRITE_F}`;
 // without a clock (see setMarker). Verified live against Claude Code 2.1.296:
 // a background command shows up as type 'shell', status 'running', and the
 // session itself goes idle while it runs.
-const HELD_JQ = `[(.background_tasks // [])[]? | select((.status // .state) as $s | $s=="running" or $s=="in_progress" or $s=="pending")] | if any(.[]; .type != "shell") then "background" elif $a=="1" and length>0 then "shell" else "" end`;
-const HELD_PY = `import sys,json,os;d=json.load(sys.stdin);ts=[t for t in (d.get("background_tasks") or []) if (t.get("status") or t.get("state")) in ("running","in_progress","pending")];print("background" if any(t.get("type")!="shell" for t in ts) else "shell" if ts and os.environ.get("A")=="1" else "")`;
+//
+// A plain 'stop' names its session on a second line, and so does a prompt
+// (see promptMarker): several sessions can share one project, and with it one
+// marker file. The window has to know whose turn ended to read that
+// session's transcript and not a neighbour's, and whose prompt it was to
+// leave the others' state alone. Every hook payload carries .session_id
+// (measured against 2.1.322). The parsers print "<what> <session>" on one
+// line, which the shell splits at the space; the id is reduced to the
+// characters a uuid can have. An extension older than the hook reads only
+// the first line of such a marker and loses nothing.
+const SID_JQ = `(.session_id // "" | if type == "string" then gsub("[^0-9A-Za-z_-]"; "") else "" end)`;
+const SID_PY = `s=d.get("session_id");s="".join(c for c in s if c.isalnum() or c in "-_") if isinstance(s,str) else ""`;
+const HELD_JQ = `([(.background_tasks // [])[]? | select((.status // .state) as $s | $s=="running" or $s=="in_progress" or $s=="pending")] | if any(.[]; .type != "shell") then "background" elif $a=="1" and length>0 then "shell" else "" end) + " " + ${SID_JQ}`;
+const HELD_PY = `import sys,json,os;d=json.load(sys.stdin);ts=[t for t in (d.get("background_tasks") or []) if (t.get("status") or t.get("state")) in ("running","in_progress","pending")];h="background" if any(t.get("type")!="shell" for t in ts) else "shell" if ts and os.environ.get("A")=="1" else "";${SID_PY};print(h+" "+s)`;
 const stopMarker =
-  `${MARKER_F}; in="$(cat)"; h=""; a=0; [ -f "$d/.shell-keeps-working" ] && a=1; ` +
-  `if command -v jq >/dev/null 2>&1; then h="$(printf '%s' "$in" | jq -r --arg a "$a" '${HELD_JQ}' 2>/dev/null)"; ` +
-  `elif command -v python3 >/dev/null 2>&1; then h="$(printf '%s' "$in" | A="$a" python3 -c '${HELD_PY}' 2>/dev/null)"; fi; ` +
-  `case "$h" in background|shell) printf 'working\\n%s' "$h";; *) printf stop;; esac ${WRITE_F}`;
+  `${MARKER_F}; in="$(cat)"; o=""; a=0; [ -f "$d/.shell-keeps-working" ] && a=1; ` +
+  `if command -v jq >/dev/null 2>&1; then o="$(printf '%s' "$in" | jq -r --arg a "$a" '${HELD_JQ}' 2>/dev/null)"; ` +
+  `elif command -v python3 >/dev/null 2>&1; then o="$(printf '%s' "$in" | A="$a" python3 -c '${HELD_PY}' 2>/dev/null)"; fi; ` +
+  `h="\${o%% *}"; s="\${o#* }"; ` +
+  `case "$h" in background|shell) printf 'working\\n%s' "$h";; *) if [ -n "$s" ]; then printf 'stop\\n%s' "$s"; else printf stop; fi;; esac ${WRITE_F}`;
 
 // The turn died on Claude's side: a spend limit, a 529, an expired session, a
 // connection lost mid-response. Claude Code ends it with StopFailure instead
@@ -122,13 +135,16 @@ const stopFailureMarker =
 // behind "Another Claude session sent a message:", the hook got it without;
 // both count. An extension older than the hook reads a plain 'prompt'.
 const WAKE_PREFIXES = ['<task-notification>', '<agent-message ', 'Another Claude session sent a message:'];
-const WAKE_JQ = `(.prompt // "") as $p | if any(${JSON.stringify(WAKE_PREFIXES)}[]; . as $w | $p | startswith($w)) then "wake" else "" end`;
-const WAKE_PY = `import sys,json;p=json.load(sys.stdin).get("prompt") or "";print("wake" if p.startswith(tuple(${JSON.stringify(WAKE_PREFIXES)})) else "")`;
+// The session follows on a third line (see stopMarker); a prompt with images
+// carries .prompt as a list, which counts as typed.
+const WAKE_JQ = `(.prompt // "" | if type == "string" then . else "" end) as $p | (if any(${JSON.stringify(WAKE_PREFIXES)}[]; . as $w | $p | startswith($w)) then "wake" else "" end) + " " + ${SID_JQ}`;
+const WAKE_PY = `import sys,json;d=json.load(sys.stdin);p=d.get("prompt");p=p if isinstance(p,str) else "";${SID_PY};print(("wake" if p.startswith(tuple(${JSON.stringify(WAKE_PREFIXES)})) else "")+" "+s)`;
 const promptMarker =
-  `${MARKER_F}; w=""; ` +
-  `if command -v jq >/dev/null 2>&1; then w="$(jq -r '${WAKE_JQ}' 2>/dev/null)"; ` +
-  `elif command -v python3 >/dev/null 2>&1; then w="$(python3 -c '${WAKE_PY}' 2>/dev/null)"; fi; ` +
-  `case "$w" in wake) printf 'prompt\\nwake';; *) printf prompt;; esac ${WRITE_F}`;
+  `${MARKER_F}; o=""; ` +
+  `if command -v jq >/dev/null 2>&1; then o="$(jq -r '${WAKE_JQ}' 2>/dev/null)"; ` +
+  `elif command -v python3 >/dev/null 2>&1; then o="$(python3 -c '${WAKE_PY}' 2>/dev/null)"; fi; ` +
+  `w="\${o%% *}"; s="\${o#* }"; [ "$w" = wake ] || w=""; ` +
+  `if [ -n "$s" ]; then printf 'prompt\\n%s\\n%s' "$w" "$s"; elif [ -n "$w" ]; then printf 'prompt\\nwake'; else printf prompt; fi ${WRITE_F}`;
 
 const HOOK_SPECS = [
   // A new prompt shows 'working' like every other event, but with a fresh
@@ -589,8 +605,18 @@ function shortReason(text) {
 // the turn" marks 6 % - mostly failures Claude recovered from in the same
 // turn, which is exactly what Radar must not report.
 let lastToolFailed = false;
+// The same three once more per session, by session id. Several sessions can
+// work in one project: the end of a turn has to be judged by its own
+// transcript, not by whichever was read last, and an Esc in one of them is
+// no reason to take down a marker the other still stands for.
+const turnMemory = new Map();
+function memoryOf(sessionId) {
+  let mem = turnMemory.get(sessionId);
+  if (!mem) turnMemory.set(sessionId, (mem = { text: '', failed: false, interrupt: false }));
+  return mem;
+}
 
-function scanTranscriptLine(line, notBefore = 0) {
+function scanTranscriptLine(line, notBefore = 0, mem = undefined) {
   // Cheap pre-filter. tool_result also has to pass when it succeeded, that is
   // what resets lastToolFailed.
   if (
@@ -623,6 +649,7 @@ function scanTranscriptLine(line, notBefore = 0) {
     for (const b of content) {
       if (b && b.type === 'text' && typeof b.text === 'string' && b.text.trim() !== '') {
         lastAssistantText = b.text;
+        if (mem) mem.text = b.text;
       }
     }
     return;
@@ -630,8 +657,14 @@ function scanTranscriptLine(line, notBefore = 0) {
   if (d.type !== 'user') return;
   for (const b of content) {
     if (!b || typeof b !== 'object') continue;
-    if (isInterruptBlock(b)) sawInterrupt = true;
-    if (b.type === 'tool_result') lastToolFailed = b.is_error === true;
+    if (isInterruptBlock(b)) {
+      sawInterrupt = true;
+      if (mem) mem.interrupt = true;
+    }
+    if (b.type === 'tool_result') {
+      lastToolFailed = b.is_error === true;
+      if (mem) mem.failed = lastToolFailed;
+    }
   }
 }
 
@@ -684,8 +717,9 @@ function scanTranscripts(sessions, turnStart = 0) {
     // a line.
     if (first && seen > 0) lines.shift();
     const notBefore = first ? turnStart - TURN_MARGIN_MS : 0;
+    const mem = memoryOf(s.sessionId);
     for (const line of lines) {
-      if (line) scanTranscriptLine(line, notBefore);
+      if (line) scanTranscriptLine(line, notBefore, mem);
     }
   }
 }
@@ -1182,6 +1216,7 @@ async function activate(context) {
     lastToolFailed = false;
     sawInterrupt = false;
     lastAssistantText = '';
+    turnMemory.clear();
     return setMarker(null);
   };
 
@@ -1308,14 +1343,26 @@ async function activate(context) {
       } catch {
         return; // file gone or another window was faster
       }
-      // First line is the label; StopFailure adds its reason on a second line.
+      // First line is the label. What follows depends on it: StopFailure adds
+      // its reason, a held 'working' what holds it, a prompt what sent it and
+      // on a third line its session, a plain 'stop' its session.
       let label = '';
       let reason = '';
+      let sid = '';
       try {
         const raw = fs.readFileSync(claim, 'utf8');
         const nl = raw.indexOf('\n');
         label = (nl === -1 ? raw : raw.slice(0, nl)).trim();
-        if (nl !== -1) reason = raw.slice(nl + 1).trim();
+        const rest = nl === -1 ? '' : raw.slice(nl + 1);
+        if (label === 'prompt') {
+          const [sentBy = '', session = ''] = rest.split('\n');
+          reason = sentBy.trim();
+          sid = session.trim();
+        } else if (label === 'stop') {
+          sid = rest.trim();
+        } else {
+          reason = rest.trim();
+        }
       } finally {
         try {
           fs.unlinkSync(claim);
@@ -1346,14 +1393,17 @@ async function activate(context) {
         const root = projectRoot();
         const sessions = root ? liveSessionsHere(root) : undefined;
         if (sessions && sessions.length > 0) scanTranscripts(sessions, promptAt);
+        // Where the hook named the session that stopped, its own transcript
+        // decides and nobody else's: with two sessions in a project, a clean
+        // ending showed 🔴 because the neighbour's last tool call had failed.
+        const mem = sid ? turnMemory.get(sid) : undefined;
+        const closing = sid ? (mem ? mem.text : '') : lastAssistantText;
+        const failed = sid ? !!mem && mem.failed : lastToolFailed;
         // A question wins over a failure: both send you to the window, but
         // "answer me" is the more accurate instruction than "look at this".
-        if (
-          vscode.workspace.getConfiguration('claudeRadar').get('detectQuestions', true) &&
-          endsWithQuestion(lastAssistantText)
-        ) {
+        if (vscode.workspace.getConfiguration('claudeRadar').get('detectQuestions', true) && endsWithQuestion(closing)) {
           label = 'waiting';
-        } else if (lastToolFailed) {
+        } else if (failed) {
           label = 'error';
         }
       }
@@ -1373,10 +1423,13 @@ async function activate(context) {
         if (!wake) workingSince = promptAt;
         label = 'working';
         // A new prompt starts a clean turn: whatever failed in the previous
-        // one must not colour this one's ending red.
+        // one must not colour this one's ending red. Where the hook named the
+        // session, only that one starts over.
         lastToolFailed = false;
         sawInterrupt = false;
         lastAssistantText = '';
+        if (sid) turnMemory.delete(sid);
+        else turnMemory.clear();
       } else if (label === 'working') {
         if (!workingSince) workingSince = Date.now();
       } else {
