@@ -788,9 +788,14 @@ function notify(label, ranFor = '', ranMs = 0, reason = '') {
       '-contentImage', path.join(__dirname, 'icon.png'),
     ];
     if (sound) args.push('-sound', sound);
-    if (codeCliPath && projectPath) {
-      // Clicking the banner focuses the right window
-      args.push('-execute', `${shq(codeCliPath)} ${shq(projectPath)}`);
+    // Clicking the banner focuses the right window: the CLI goes to the window
+    // that already shows what it is handed. For a .code-workspace that is the
+    // workspace file; handed the first folder, it opens that folder in a
+    // window of its own. An unsaved workspace has no file to hand over.
+    const workspace = vscode.workspace.workspaceFile;
+    const target = !workspace ? projectPath : workspace.scheme === 'file' ? workspace.fsPath : '';
+    if (codeCliPath && target) {
+      args.push('-execute', `${shq(codeCliPath)} ${shq(target)}`);
     } else {
       args.push('-activate', bundleId);
     }

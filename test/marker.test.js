@@ -457,6 +457,39 @@ test('without a threshold the done banner fires and reports the run time', async
   assert.match(bannerText(), /Done/);
 });
 
+test('a banner click lands in the workspace window, not in a new one for its first folder', async (t) => {
+  // The CLI opens what it is handed. For a window that shows a .code-workspace
+  // that is the workspace file; handed the first folder, it opens that folder
+  // in a window of its own.
+  const clickTarget = () => {
+    const args = banners.length ? banners[0][1] : [];
+    const i = args.indexOf('-execute');
+    return i === -1 ? undefined : args[i + 1];
+  };
+  const finishTurn = async () => {
+    startSession();
+    await hook('prompt');
+    appendAssistant('Fertig.');
+    await hook('stop');
+  };
+  await finishTurn();
+  if (!clickTarget()) return t.skip('no terminal-notifier or no code CLI here: banners are not clickable');
+  assert.match(clickTarget(), /work\/app'$/, 'a folder window is reached by its folder');
+
+  vscode.workspace.workspaceFile = { scheme: 'file', fsPath: '/work/team.code-workspace' };
+  try {
+    await finishTurn();
+    assert.match(clickTarget(), /'\/work\/team\.code-workspace'$/);
+
+    vscode.workspace.workspaceFile = { scheme: 'untitled', fsPath: '/untitled-1' };
+    await finishTurn();
+    assert.equal(clickTarget(), undefined, 'an unsaved workspace has no file to hand over');
+    assert.ok(banners[0][1].includes('-activate'), 'so its banner brings the editor to the front');
+  } finally {
+    delete vscode.workspace.workspaceFile;
+  }
+});
+
 test('a failed turn says Failed in the banner', async () => {
   startSession();
   await hook('prompt');
