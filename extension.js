@@ -1199,6 +1199,10 @@ async function activate(context) {
   let backgroundWork = false;
   // When the ⚠️ on display first showed (see showAttention).
   let waitingSince = 0;
+  // True while the attention marker on display reports a turn that has ended:
+  // done, failed, or a closing question. A ⚠️ for a permission or a dialog
+  // belongs to a turn that is still open.
+  let turnOver = false;
   // When the last prompt arrived, typed or sent by background work that
   // ended. The clock can be older than that: a wake-up keeps it (see check()).
   let promptAt = 0;
@@ -1217,19 +1221,23 @@ async function activate(context) {
     sawInterrupt = false;
     lastAssistantText = '';
     turnMemory.clear();
+    turnOver = false;
     return setMarker(null);
   };
 
   // waiting/stop/error are attention events. In the focused window, "peek":
   // show the marker ~1 s, then hide it, without banner/sound. The user sees it
   // once, then the tab is quiet again. Unfocused: persistent marker + banner.
-  const showAttention = (label, ranFor = '', ranMs = 0, reason = '') => {
+  const showAttention = (label, ranFor = '', ranMs = 0, reason = '', over = false) => {
     clearTimeout(peekTimer); // a running peek must never outlive a new event
     // A prompt left open is reported twice: PermissionRequest at once, the
     // Notification six seconds later (measured against 2.1.296). The second
     // report is no news, so it does not ring again. Later than that it is
-    // another prompt, and that one does.
-    const echo = label === 'waiting' && currentLabel === 'waiting' && Date.now() - waitingSince < ECHO_MS;
+    // another prompt, and that one does. A turn that closes on a question is
+    // news of its own.
+    const echo =
+      label === 'waiting' && currentLabel === 'waiting' && !over && !turnOver && Date.now() - waitingSince < ECHO_MS;
+    turnOver = over;
     // When this ⚠️ first showed: the sweep measures an answered prompt against
     // it. A repeat keeps the time.
     if (label === 'waiting' && currentLabel !== 'waiting') waitingSince = Date.now();
@@ -1263,6 +1271,15 @@ async function activate(context) {
     scanTranscripts(sessions, promptAt);
     if (sawInterrupt) {
       sawInterrupt = false;
+      // Whose turn it was. With several sessions in the project, one that is
+      // at work and was not interrupted is what the marker stands for, the
+      // way a background agent is (below).
+      const interrupted = new Set();
+      for (const [id, mem] of turnMemory) {
+        if (mem.interrupt) interrupted.add(id);
+        mem.interrupt = false;
+      }
+      const othersAtWork = sessions.some((s) => s.status === 'busy' && !interrupted.has(s.sessionId));
       // Esc ends the turn, not necessarily the work. Since Claude Code 2.1.286
       // the VS Code panel leaves background agents running on Stop and Esc
       // (verified live against 2.1.296: the agent worked on for 43 s after
@@ -1272,10 +1289,21 @@ async function activate(context) {
       // interrupt line and does not count (see agentFinished). Nothing extra
       // is needed to end this: an agent that finishes or gets stopped wakes
       // the session with a prompt of its own, and that turn's hooks take over.
-      if (currentLabel !== 'working' || countActiveAgents() === 0) {
-        clearState();
-        return true;
+      if (currentLabel === 'working') {
+        if (countActiveAgents() === 0 && !othersAtWork) {
+          clearState();
+          return true;
+        }
+      } else if (!turnOver) {
+        // A ⚠️ whose prompt was open: Esc dismissed it, unless a session is
+        // still asking, and then it was a neighbour that got interrupted.
+        if (!sessions.some((s) => s.status === 'waiting')) {
+          clearState();
+          return true;
+        }
       }
+      // A marker for a turn that had ended (done, failed, a closing question)
+      // stands. Nothing of it is left to interrupt, the Esc was elsewhere.
     }
     // A ⚠️ whose prompt has been answered goes back to 💬: Claude is working
     // again, and no hook will say so before the tool call ends. The clock
@@ -1371,6 +1399,8 @@ async function activate(context) {
         }
       }
       if (!LABELS.includes(label)) label = 'stop'; // unexpected content -> treat as done
+      // Stop and StopFailure end a turn, whatever marker comes of it below.
+      const turnEnded = label === 'stop' || label === 'error';
       // Only the StopFailure hook brings a reason. A failed last tool call
       // (below) has none; its banner just says "Failed". The Stop hook's
       // 'working' says 'background' there when it holds the marker for
@@ -1451,7 +1481,7 @@ async function activate(context) {
         setMarker('working');
         return;
       }
-      showAttention(label, ranFor, ranMs, why);
+      showAttention(label, ranFor, ranMs, why, turnEnded);
     };
     const ownName = path.basename(file);
     let debounce;

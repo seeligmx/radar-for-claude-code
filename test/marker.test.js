@@ -995,3 +995,49 @@ test('a turn is judged by its own transcript, not by a neighbour\'s', async () =
     oneSessionAgain();
   }
 });
+
+test('an Esc in one session leaves the marker to the other that works on', async () => {
+  await twoSessions();
+  try {
+    otherInterrupt();
+    other('idle');
+    sweepTick();
+    assert.match(title, /💬/, 'this session is still at it');
+
+    appendInterrupt(); // and now this one, too
+    mine('idle');
+    sweepTick();
+    assert.equal(title, '', 'nobody is left');
+  } finally {
+    oneSessionAgain();
+  }
+});
+
+test('an Esc elsewhere takes down neither a done marker nor a prompt that is still open', async () => {
+  await twoSessions();
+  try {
+    appendAssistant('Fertig.');
+    mine('idle');
+    await hook(`stop\n${SESSION_ID}`);
+    assert.match(title, /🟢/);
+    otherInterrupt();
+    other('idle');
+    sweepTick();
+    assert.match(title, /🟢/, 'that turn had ended before');
+
+    await twoSessions();
+    mine('waiting', Date.now(), { waitingFor: 'permission prompt' });
+    await hook('waiting');
+    otherInterrupt();
+    other('idle');
+    sweepTick();
+    assert.match(title, /⚠️/, 'the prompt here is still open');
+
+    appendInterrupt(); // Esc on the prompt itself
+    mine('idle');
+    sweepTick();
+    assert.equal(title, '', 'dismissed');
+  } finally {
+    oneSessionAgain();
+  }
+});
