@@ -1287,7 +1287,8 @@ test('a session sent back to work after its closing question gives the ⚠️ up
     assert.match(title, /⚠️/, 'too early to tell');
 
     later(1);
-    await hook('working'); // still busy a minute on: it was sent back to work
+    appendAssistant('Dann mache ich weiter.'); // sent back to work, it has a word of its own again
+    await hook('working'); // and is still busy a minute on
     assert.match(title, /💬/);
 
     backToNow();
@@ -1295,6 +1296,7 @@ test('a session sent back to work after its closing question gives the ⚠️ up
     await hook(`stop\n${SESSION_ID}`);
     assert.match(title, /⚠️/);
     later(1);
+    appendAssistant('Weiter im Text.');
     sweepTick(); // the same, noticed without any hook
     assert.match(title, /💬/);
 
@@ -1374,6 +1376,29 @@ test('the same on the first turn the window sees', async () => {
     assert.match(title, /💬/, 'the Esc belongs to the turn before');
   } finally {
     fs.rmSync(fresh, { force: true });
+    startSession();
+  }
+});
+
+test('a closing question outlasts Stop hooks that take their time', async () => {
+  // A session reads busy until the last of its Stop hooks is through, and one
+  // of the user's own can run for many seconds: tests, a linter, a summary.
+  mine('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  try {
+    appendAssistant('Soll ich das so machen?');
+    await hook(`stop\n${SESSION_ID}`); // the registry still says busy
+    assert.match(title, /⚠️/);
+
+    later(0.2); // twelve seconds on, a hook is still at it
+    sweepTick();
+    assert.match(title, /⚠️/, 'busy without a word of its own is not back at work');
+
+    mine('idle'); // the last hook is through
+    sweepTick();
+    assert.match(title, /⚠️/, 'and the question still waits for its answer');
+  } finally {
+    backToNow();
     startSession();
   }
 });

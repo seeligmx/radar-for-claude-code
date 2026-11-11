@@ -646,6 +646,9 @@ function scanTranscriptLine(line, notBefore = 0, mem = undefined) {
     // Claude Code flags its own error messages; they are not Claude's closing
     // words. (The StopFailure hook reports them, not the transcript.)
     if (d.isApiErrorMessage === true) return;
+    // A line of its own shows a session at work, also after it closed on a
+    // question (see movedOn).
+    if (mem) mem.spoke = true;
     // Claude splits one message across several lines, one per content block,
     // so the last text block seen is the turn's closing text.
     for (const b of content) {
@@ -1268,6 +1271,8 @@ async function activate(context) {
   const stillAsking = () => {
     const root = projectRoot();
     const sessions = root ? liveSessionsHere(root) : undefined;
+    // What a session wrote since its question is in the transcript.
+    if (asking.size > 0 && sessions && sessions.length > 0) scanTranscripts(sessions, promptAt);
     movedOn(sessions);
     return asking.size > 0 || (!!sessions && sessions.some((s) => s.status === 'waiting'));
   };
@@ -1275,12 +1280,15 @@ async function activate(context) {
   // A session that is at work again has moved on from its closing question: a
   // Stop hook can send Claude back to work, and loops built on that do so
   // after every turn. Its entry still says busy for the moment its Stop hooks
-  // take, hence the grace. True when one was dropped.
+  // take, hence the grace. A hook of the user's own can take far longer than
+  // that, tests or a linter, so busy alone does not say it: the session also
+  // has to have written a line of its own since. True when one was dropped.
   const movedOn = (sessions) => {
     let dropped = false;
     for (const [id, at] of asking) {
       const s = sessions && sessions.find((x) => x.sessionId === id);
-      if (s && s.status === 'busy' && Date.now() - at > ASKED_GRACE_MS) dropped = asking.delete(id);
+      const spoke = (turnMemory.get(id) || {}).spoke;
+      if (s && s.status === 'busy' && spoke && Date.now() - at > ASKED_GRACE_MS) dropped = asking.delete(id);
     }
     return dropped;
   };
@@ -1547,6 +1555,7 @@ async function activate(context) {
         if (vscode.workspace.getConfiguration('claudeRadar').get('detectQuestions', true) && endsWithQuestion(closing)) {
           label = 'waiting';
           if (sid) asking.set(sid, Date.now());
+          if (mem) mem.spoke = false; // what it says from here on is news
         } else if (failed) {
           label = 'error';
         }
