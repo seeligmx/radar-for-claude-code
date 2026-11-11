@@ -224,20 +224,31 @@ function detectBundleId() {
 // For terminal-notifier's -execute string (runs in a shell)
 const shq = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-// Realpath-resolved path of the first workspace folder. Everything
-// project-scoped keys off this: the marker file, the transcript folder, and
-// the cwd match against running sessions. Symlink variants of the same folder
-// therefore resolve alike. Unresolvable (just deleted) falls back to the raw
-// path, so a marker still has a stable name.
-function projectRoot() {
-  const folders = vscode.workspace.workspaceFolders;
-  if (!folders || folders.length === 0) return undefined;
-  const p = folders[0].uri.fsPath;
+// A folder's path the way Claude Code spells it: symlinks resolved, in the
+// case the disk stores, composed (NFC). That one spelling is what its hooks
+// hash, what its session registry reports and what its transcript folders
+// are named after, whatever was typed to get there (measured against 2.1.322
+// by starting it in a folder under another case, and in one whose umlaut the
+// disk keeps as letter plus accent). VS Code reports the path as it was typed
+// or picked, and Node's own realpathSync keeps that spelling, so a window
+// opened as ~/Dev/app never met the marker of ~/dev/app. The native one asks
+// the disk. Unresolvable (just deleted) falls back to the path as given.
+function claudeSpelling(p) {
   try {
-    return fs.realpathSync(p);
+    return fs.realpathSync.native(p).normalize('NFC');
   } catch {
     return p;
   }
+}
+
+// The first workspace folder. Everything project-scoped keys off this: the
+// marker file, the transcript folder, and the cwd match against running
+// sessions. A folder that is gone keeps the path VS Code reports, so its
+// marker still has a stable name.
+function projectRoot() {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) return undefined;
+  return claudeSpelling(folders[0].uri.fsPath);
 }
 
 // How Claude Code names its transcript folders: every non-alphanumeric UTF-16
@@ -458,13 +469,9 @@ function liveSessionsHere(root) {
     if (typeof d.sessionId !== 'string' || typeof d.cwd !== 'string') continue;
     // Resolve the session's cwd the same way projectRoot() resolves ours: a
     // project opened through a symlink otherwise never matches, and a session
-    // wrongly counted as gone takes a live marker with it.
-    let cwd = d.cwd;
-    try {
-      cwd = fs.realpathSync(cwd);
-    } catch {
-      /* directory gone; compare what the session reported */
-    }
+    // wrongly counted as gone takes a live marker with it. A directory that
+    // is gone compares as the session reported it.
+    const cwd = claudeSpelling(d.cwd);
     // Prefix, not equality: Claude may have been started in a subfolder while
     // the marker hangs on the project root (the hook uses CLAUDE_PROJECT_DIR).
     // Deliberately no filter on d.entrypoint, or sessions started in a plain
