@@ -40,6 +40,7 @@ const LABELS = ['prompt', 'working', 'waiting', 'stop', 'error'];
 const PEEK_MS = 1000; // focused window: show an attention marker briefly, then hide it
 const ECHO_MS = 10000; // a ⚠️ reported again this soon is the same prompt, not a new one
 const ASKED_GRACE_MS = 5000; // how long a session may still look busy after its closing question (its Stop hooks run)
+const REGISTRY_LAG_MS = 1000; // the registry shows a prompt about 0.3 s after its hook has fired (measured against 2.1.296)
 
 // One hook per event, each writes an event label into the marker file.
 // MARKER_F computes $f = this project's marker file path, identical to
@@ -1439,7 +1440,7 @@ async function activate(context) {
       workingSince = Date.now();
       updateAgentCount();
       setMarker('working');
-    } else if (!sessions.some((s) => s.status === 'waiting')) {
+    } else if (Date.now() - awaiting > REGISTRY_LAG_MS && !sessions.some((s) => s.status === 'waiting')) {
       awaiting = 0; // answered and through already, dismissed, or a registry without the status
     }
   };

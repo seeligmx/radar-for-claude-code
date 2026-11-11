@@ -1169,6 +1169,7 @@ test('a prompt that was dismissed leaves the title empty, and the check ends', a
   await hook('waiting');
   try {
     setFocus(true);
+    later(1);
     mine('idle'); // Esc on the prompt: the turn is over
     sweepTick();
     assert.equal(title, '');
@@ -1176,6 +1177,7 @@ test('a prompt that was dismissed leaves the title empty, and the check ends', a
     sweepTick();
     assert.equal(title, '', 'the check is not waiting for an answer any more');
   } finally {
+    backToNow();
     setFocus(false);
     startSession();
   }
@@ -1304,6 +1306,28 @@ test('a session sent back to work after its closing question gives the ⚠️ up
     assert.match(title, /🟢/);
   } finally {
     backToNow();
+    startSession();
+  }
+});
+
+test('a prompt seen the moment it came up is still waited for', async () => {
+  // Measured against Claude Code 2.1.296: the hook fires at once, the registry
+  // says waiting 0.3 s later. A check that runs in between must not conclude
+  // that the prompt is gone.
+  mine('busy');
+  await hook(`prompt\n\n${SESSION_ID}`);
+  setFocus(true);
+  try {
+    await hook('waiting');
+    sweepTick(); // the registry still says busy
+    mine('waiting', Date.now(), { waitingFor: 'permission prompt' });
+    await sleep(1100);
+    assert.equal(title, '');
+    mine('busy'); // allowed
+    sweepTick();
+    assert.match(title, /💬/);
+  } finally {
+    setFocus(false);
     startSession();
   }
 });
